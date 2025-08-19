@@ -271,6 +271,47 @@ Notes:
 - `--spatial-ratio` and `--temporal-ratio` increase compression at the cost of quality; larger values mean more loss.
 - `--compare` saves a side-by-side image of the first frames; `--analyze-output` writes MSE/RMSE/PSNR across sampled frames.
 
+## Multiverse compression (ratio)
+
+Ratio-based compression of 3D stacks (layers of 2D fields). Spatial downsampling uses `--spatial-ratio`, and layer decimation uses `--layer-ratio`. Expansion supports bilinear (`interp`) or nearest-neighbor. Supports mosaic previews, side-by-side compare, and metrics.
+
+```bash
+# Generate a multiverse stack and preview mosaic
+.venv/bin/python -m phi.cli fractal multiverse generate \
+  --output multiverse_full.json \
+  --width 96 --height 96 --layers 9 --octaves 4 --seed 42 \
+  --preview multiverse_mosaic.png
+
+# Compress to a model (JSON)
+.venv/bin/python -m phi.cli fractal multiverse compress \
+  --input multiverse_full.json \
+  --model multiverse_model.json \
+  --spatial-ratio 2 --layer-ratio 3 --method interp
+
+# Expand back to original size (or specify --width/--height/--layers)
+.venv/bin/python -m phi.cli fractal multiverse expand \
+  --model multiverse_model.json \
+  --output multiverse_recon.json \
+  --method interp \
+  --preview multiverse_recon_mosaic.png
+
+# One-shot engine: compress + expand + compare + analyze
+.venv/bin/python -m phi.cli fractal multiverse engine \
+  --input multiverse_full.json \
+  --recon-output multiverse_recon.json \
+  --model multiverse_model.json \
+  --spatial-ratio 2 --layer-ratio 3 --method interp \
+  --compare multiverse_compare.png \
+  --analyze multiverse_metrics.csv
+```
+
+Notes:
+- `--method` controls upsampling: `interp` (bilinear) or `nearest`.
+- Larger `--spatial-ratio`/`--layer-ratio` increase compression with more loss.
+- `--compare` saves a side-by-side mosaic; `--analyze` or `--analyze-output` writes MSE/RMSE/PSNR and spectral metrics.
+
+CLI note: For engine subcommands in `fractal ai`, `fractal cosmos`, and `fractal multiverse`, `--analyze` is an alias for `--analyze-output`.
+
 ## AI model compression (ratio)
 
 Compress fully-connected neural nets by decimating hidden neurons (keep every Nth), then expand back via nearest or linear blend. Bundles are JSON with base64 numpy weights for portability. Optional Keras export.

@@ -62,8 +62,6 @@ def transform(input_path: str, output_path: str, columns: Optional[str], op: str
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-
-
 @main.group(name="fractal")
 def fractal_cmd() -> None:
     """Fractal compression/expansion commands."""
@@ -161,7 +159,7 @@ def ai_expand(model_path: str, output_path: str, hidden: Optional[str], method: 
 @click.option("--model", "model_path", type=click.Path(dir_okay=False), default=None, help="Optional path to save compressed model JSON")
 @click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth hidden neuron")
 @click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
-@click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (per-layer MSE and totals)")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (per-layer MSE and totals)")
 @click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export reconstructed Keras model (.h5)")
 def ai_engine(input_path: str, recon_output: str, model_path: Optional[str], ratio: int, method: str, analyze_output: Optional[str], export_keras: Optional[str]) -> None:
     """Compress + expand an AI model; optionally save compressed model, metrics, and Keras export."""
@@ -262,7 +260,7 @@ def quantum_expand(model_path: str, output_path: str, qubits: Optional[int], met
 @click.option("--model", "model_path", type=click.Path(dir_okay=False), default=None, help="Optional path to save compressed model JSON")
 @click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth qubit")
 @click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
-@click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (gate counts and depth)")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (gate counts and depth)")
 @click.option("--export-qasm", type=click.Path(dir_okay=False), default=None, help="Optional path to export reconstructed OpenQASM 2.0 (.qasm)")
 def quantum_engine(input_path: str, recon_output: str, model_path: Optional[str], ratio: int, method: str, analyze_output: Optional[str], export_qasm: Optional[str]) -> None:
     """Compress + expand a quantum circuit; optionally save compressed model, metrics, and QASM export."""
@@ -288,6 +286,273 @@ def quantum_engine(input_path: str, recon_output: str, model_path: Optional[str]
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+
+@fractal_quantum.command("export-qasm")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input circuit JSON path (full or compressed)")
+@click.option("--output", "qasm_path", type=click.Path(dir_okay=False), required=True, help="Output OpenQASM 2.0 path (.qasm)")
+def quantum_export_qasm(model_path: str, qasm_path: str) -> None:
+    """Export a (full or compressed) circuit JSON to OpenQASM 2.0."""
+    try:
+        from . import quantum as qmod  # lazy import
+        bundle = qmod.load_model(model_path)
+        qmod.export_qasm(bundle, qasm_path)
+        click.echo(f"Wrote QASM: {qasm_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_cmd.group("cosmos")
+def fractal_cosmos() -> None:
+    """Cosmic field compression/expansion (ratio strategy)."""
+
+
+@fractal_cosmos.command("generate")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output JSON model path (full cosmos field)")
+@click.option("--width", type=int, required=True, help="Field width")
+@click.option("--height", type=int, required=True, help="Field height")
+@click.option("--octaves", type=int, default=4, show_default=True, help="fBm octaves")
+@click.option("--seed", type=int, default=None, help="Random seed (optional)")
+@click.option("--preview", "preview_path", type=click.Path(dir_okay=False), default=None, help="Optional preview PNG path")
+def cosmos_generate(output_path: str, width: int, height: int, octaves: int, seed: Optional[int], preview_path: Optional[str]) -> None:
+    """Generate a full cosmos field bundle (JSON)."""
+    try:
+        from . import cosmos as cmod  # lazy import
+        bundle = cmod.generate_full_field(width=width, height=height, octaves=octaves, seed=seed)
+        cmod.save_model(bundle, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if preview_path:
+            cmod.save_image_from_model(bundle, preview_path)
+            click.echo(f"Wrote preview: {preview_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_cosmos.command("compress")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full cosmos JSON path")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), required=True, help="Output compressed JSON model path")
+@click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth pixel per axis")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method to record in model")
+def cosmos_compress(input_path: str, model_path: str, ratio: int, method: str) -> None:
+    """Compress a full cosmos field into a compact ratio model (educational)."""
+    try:
+        from . import cosmos as cmod  # lazy import
+        full = cmod.load_model(input_path)
+        cfg = cmod.CosmosConfig(strategy="ratio", ratio=ratio, method=method.lower())
+        bundle = cmod.compress_field(full, cfg)
+        cmod.save_model(bundle, model_path)
+        click.echo(f"Wrote model: {model_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_cosmos.command("expand")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input compressed JSON model path (or full)")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output full cosmos JSON path")
+@click.option("--width", type=int, default=None, help="Target width (optional; must specify both width and height)")
+@click.option("--height", type=int, default=None, help="Target height (optional; must specify both width and height)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default=None, help="Override expansion method recorded in model")
+@click.option("--preview", "preview_path", type=click.Path(dir_okay=False), default=None, help="Optional preview PNG path")
+def cosmos_expand(model_path: str, output_path: str, width: Optional[int], height: Optional[int], method: Optional[str], preview_path: Optional[str]) -> None:
+    """Expand a compressed cosmos bundle back to a full bundle."""
+    try:
+        from . import cosmos as cmod  # lazy import
+        bundle = cmod.load_model(model_path)
+        if (width is None) ^ (height is None):
+            raise click.UsageError("Specify both --width and --height, or neither")
+        target_size = (int(width), int(height)) if (width is not None and height is not None) else None
+        full = cmod.expand_field(bundle, target_size=target_size, method=(method.lower() if method else None))
+        cmod.save_model(full, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if preview_path:
+            cmod.save_image_from_model(full, preview_path)
+            click.echo(f"Wrote preview: {preview_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_cosmos.command("engine")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full cosmos JSON path")
+@click.option("--recon-output", "recon_output", type=click.Path(dir_okay=False), required=True, help="Output full cosmos JSON path (reconstructed)")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), default=None, help="Optional path to save compressed model JSON")
+@click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth pixel per axis")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
+@click.option("--compare", "compare_path", type=click.Path(dir_okay=False), default=None, help="Optional side-by-side compare image output path")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (MSE/RMSE/PSNR + spectral)")
+def cosmos_engine(input_path: str, recon_output: str, model_path: Optional[str], ratio: int, method: str, compare_path: Optional[str], analyze_output: Optional[str]) -> None:
+    """Compress + expand a cosmos field; optionally save compressed model, metrics, and preview compare."""
+    try:
+        from . import cosmos as cmod  # lazy import
+        full_in = cmod.load_model(input_path)
+        cfg = cmod.CosmosConfig(strategy="ratio", ratio=ratio, method=method.lower())
+        comp = cmod.compress_field(full_in, cfg)
+        if model_path:
+            cmod.save_model(comp, model_path)
+            click.echo(f"Wrote model: {model_path}")
+        ow = int(full_in.get("width", 0))
+        oh = int(full_in.get("height", 0))
+        full_out = cmod.expand_field(comp, target_size=(ow, oh), method=method.lower())
+        cmod.save_model(full_out, recon_output)
+        click.echo(f"Wrote model: {recon_output}")
+        if compare_path:
+            cmod.save_compare_image(full_in, full_out, compare_path)
+            click.echo(f"Wrote compare: {compare_path}")
+        if analyze_output:
+            mdf = cmod.metrics_from_paths(input_path, recon_output)
+            mdf.to_csv(analyze_output, index=False)
+            click.echo(f"Wrote analysis: {analyze_output}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_cosmos.command("preview")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input cosmos JSON path (full or compressed)")
+@click.option("--output", "image_path", type=click.Path(dir_okay=False), required=True, help="Output preview PNG path")
+@click.option("--cmap", type=str, default="viridis", show_default=True, help="Matplotlib colormap name")
+def cosmos_preview(model_path: str, image_path: str, cmap: str) -> None:
+    """Export a preview image from a cosmos model (full or compressed)."""
+    try:
+        from . import cosmos as cmod  # lazy import
+        bundle = cmod.load_model(model_path)
+        cmod.save_image_from_model(bundle, image_path, cmap=cmap)
+        click.echo(f"Wrote preview: {image_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_cmd.group("multiverse")
+def fractal_multiverse() -> None:
+    """Multiverse stack compression/expansion (ratio strategy)."""
+
+
+@fractal_multiverse.command("generate")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output JSON model path (full multiverse stack)")
+@click.option("--width", type=int, required=True, help="Field width")
+@click.option("--height", type=int, required=True, help="Field height")
+@click.option("--layers", type=int, required=True, help="Number of layers in the multiverse stack")
+@click.option("--octaves", type=int, default=4, show_default=True, help="fBm octaves per layer")
+@click.option("--seed", type=int, default=None, help="Random seed (optional)")
+@click.option("--preview", "preview_path", type=click.Path(dir_okay=False), default=None, help="Optional mosaic PNG path")
+def multiverse_generate(output_path: str, width: int, height: int, layers: int, octaves: int, seed: Optional[int], preview_path: Optional[str]) -> None:
+    """Generate a full multiverse stack bundle (JSON)."""
+    try:
+        from . import multiverse as mmod  # lazy import
+        bundle = mmod.generate_full_stack(width=width, height=height, layers=layers, octaves=octaves, seed=seed)
+        mmod.save_model(bundle, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if preview_path:
+            mmod.save_mosaic_from_model(bundle, preview_path)
+            click.echo(f"Wrote mosaic: {preview_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_multiverse.command("compress")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full multiverse JSON path")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), required=True, help="Output compressed JSON model path")
+@click.option("--spatial-ratio", type=int, default=2, show_default=True, help="Downsample every Nth pixel per axis")
+@click.option("--layer-ratio", type=int, default=1, show_default=True, help="Keep every Nth layer (1=keep all)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method to record in model")
+def multiverse_compress(input_path: str, model_path: str, spatial_ratio: int, layer_ratio: int, method: str) -> None:
+    """Compress a full multiverse stack into a ratio model (educational)."""
+    try:
+        from . import multiverse as mmod  # lazy import
+        full = mmod.load_model(input_path)
+        cfg = mmod.MultiverseConfig(strategy="ratio", spatial_ratio=spatial_ratio, layer_ratio=layer_ratio, method=method.lower())
+        bundle = mmod.compress_stack(full, cfg)
+        mmod.save_model(bundle, model_path)
+        click.echo(f"Wrote model: {model_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_multiverse.command("expand")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input compressed JSON model path (or full)")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output full multiverse JSON path")
+@click.option("--width", type=int, default=None, help="Target width (optional; must specify width, height, layers together)")
+@click.option("--height", type=int, default=None, help="Target height (optional; must specify width, height, layers together)")
+@click.option("--layers", type=int, default=None, help="Target layers (optional; must specify width, height, layers together)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default=None, help="Override expansion method recorded in model")
+@click.option("--preview", "preview_path", type=click.Path(dir_okay=False), default=None, help="Optional mosaic PNG path")
+def multiverse_expand(model_path: str, output_path: str, width: Optional[int], height: Optional[int], layers: Optional[int], method: Optional[str], preview_path: Optional[str]) -> None:
+    """Expand a compressed multiverse bundle back to a full bundle."""
+    try:
+        from . import multiverse as mmod  # lazy import
+        bundle = mmod.load_model(model_path)
+        if any(v is not None for v in (width, height, layers)) and not all(v is not None for v in (width, height, layers)):
+            raise click.UsageError("Specify all of --width, --height, and --layers together, or none")
+        target_size = (int(width), int(height), int(layers)) if (width is not None and height is not None and layers is not None) else None
+        full = mmod.expand_stack(bundle, target_size=target_size, method=(method.lower() if method else None))
+        mmod.save_model(full, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if preview_path:
+            mmod.save_mosaic_from_model(full, preview_path)
+            click.echo(f"Wrote mosaic: {preview_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_multiverse.command("engine")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full multiverse JSON path")
+@click.option("--recon-output", "recon_output", type=click.Path(dir_okay=False), required=True, help="Output full multiverse JSON path (reconstructed)")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), default=None, help="Optional path to save compressed model JSON")
+@click.option("--spatial-ratio", type=int, default=2, show_default=True, help="Downsample every Nth pixel per axis")
+@click.option("--layer-ratio", type=int, default=1, show_default=True, help="Keep every Nth layer (1=keep all)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
+@click.option("--compare", "compare_path", type=click.Path(dir_okay=False), default=None, help="Optional side-by-side mosaic compare image path")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (MSE/RMSE/PSNR + spectral)")
+def multiverse_engine(input_path: str, recon_output: str, model_path: Optional[str], spatial_ratio: int, layer_ratio: int, method: str, compare_path: Optional[str], analyze_output: Optional[str]) -> None:
+    """Compress + expand a multiverse; optionally save compressed model, metrics, and compare mosaic."""
+    try:
+        from . import multiverse as mmod  # lazy import
+        full_in = mmod.load_model(input_path)
+        cfg = mmod.MultiverseConfig(strategy="ratio", spatial_ratio=spatial_ratio, layer_ratio=layer_ratio, method=method.lower())
+        comp = mmod.compress_stack(full_in, cfg)
+        if model_path:
+            mmod.save_model(comp, model_path)
+            click.echo(f"Wrote model: {model_path}")
+        ow = int(full_in.get("width", 0))
+        oh = int(full_in.get("height", 0))
+        oL = int(full_in.get("layers", 0))
+        full_out = mmod.expand_stack(comp, target_size=(ow, oh, oL), method=method.lower())
+        mmod.save_model(full_out, recon_output)
+        click.echo(f"Wrote model: {recon_output}")
+        if compare_path:
+            mmod.save_compare_mosaic(full_in, full_out, compare_path)
+            click.echo(f"Wrote compare: {compare_path}")
+        if analyze_output:
+            mdf = mmod.metrics_from_paths(input_path, recon_output)
+            mdf.to_csv(analyze_output, index=False)
+            click.echo(f"Wrote analysis: {analyze_output}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_multiverse.command("preview")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input multiverse JSON path (full or compressed)")
+@click.option("--output", "image_path", type=click.Path(dir_okay=False), required=True, help="Output mosaic PNG path")
+@click.option("--cmap", type=str, default="viridis", show_default=True, help="Matplotlib colormap name")
+def multiverse_preview(model_path: str, image_path: str, cmap: str) -> None:
+    """Export a mosaic image from a multiverse model (full or compressed)."""
+    try:
+        from . import multiverse as mmod  # lazy import
+        bundle = mmod.load_model(model_path)
+        mmod.save_mosaic_from_model(bundle, image_path, cmap=cmap)
+        click.echo(f"Wrote mosaic: {image_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
 
 @fractal_cmd.group("video")
 def fractal_video() -> None:
@@ -356,7 +621,7 @@ def video_expand(model_path: str, output_path: str, width: Optional[int], height
 @click.option("--fps", type=float, default=None, help="Target FPS (optional; defaults to source fps recorded in model)")
 @click.option("--frames", type=int, default=None, help="Target number of output frames (optional)")
 @click.option("--compare", "compare_path", type=click.Path(dir_okay=False), default=None, help="Optional side-by-side first-frame compare image output path")
-@click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (MSE/RMSE/PSNR over sampled frames)")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (MSE/RMSE/PSNR over sampled frames)")
 @click.option("--sample-frames", type=int, default=60, show_default=True, help="Number of frames to sample for metrics")
 def video_engine(
     input_path: str,
@@ -526,7 +791,7 @@ def three_expand(model_path: str, output_path: str, points: Optional[int], metho
 @click.option("--points", type=int, default=None, help="Target number of output points (optional)")
 @click.option("--compare", "compare_path", type=click.Path(dir_okay=False), default=None, help="Optional side-by-side projection compare image")
 @click.option("--axis", type=click.Choice(["x", "y", "z"], case_sensitive=False), default="z", show_default=True, help="Projection axis for compare image")
-@click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (approx. symmetric Chamfer distance)")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (approx. symmetric Chamfer distance)")
 @click.option("--sample-points", type=int, default=2000, show_default=True, help="Number of points to sample for metrics")
 @click.option("--nn-method", type=click.Choice(["auto", "kd", "sklearn", "brute"], case_sensitive=False), default="auto", show_default=True, help="Nearest-neighbor method for metrics")
 @click.option("--plot3d", type=click.Path(dir_okay=False), default=None, help="Optional Matplotlib 3D scatter PNG path (of reconstruction)")
@@ -663,7 +928,7 @@ def audio_expand(model_path: str, output_path: str, frames: Optional[int], metho
 @click.option("--method", type=click.Choice(["interp", "hold"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
 @click.option("--frames", type=int, default=None, help="Target number of frames (optional)")
 @click.option("--compare", "compare_path", type=click.Path(dir_okay=False), default=None, help="Optional waveform compare image (PNG)")
-@click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (MSE/RMSE/PSNR)")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (MSE/RMSE/PSNR)")
 def audio_engine(
     input_path: str,
     output_path: str,
@@ -753,7 +1018,7 @@ def image_expand(model_path: str, output_path: str, width: Optional[int], height
 @click.option("--width", type=int, default=None, help="Target width (optional; must specify both width and height)")
 @click.option("--height", type=int, default=None, help="Target height (optional; must specify both width and height)")
 @click.option("--compare", "compare_path", type=click.Path(dir_okay=False), default=None, help="Optional side-by-side comparison image output path")
-@click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (MSE/RMSE/PSNR)")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (MSE/RMSE/PSNR)")
 def image_engine(
     input_path: str,
     output_path: str,
@@ -949,7 +1214,7 @@ def fractal_harmonize(
 @click.option("--plot-column", type=str, default=None, help="Column to plot (default: first reconstructed column)")
 @click.option("--compare-plot", "compare_plot_path", type=click.Path(dir_okay=False), default=None, help="Optional path to save original vs reconstructed overlay plot")
 @click.option("--compare-column", type=str, default=None, help="Column to compare (default: first common column)")
-@click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional path to save analysis metrics CSV")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional path to save analysis metrics CSV")
 @click.option("--infer-dtypes/--no-infer-dtypes", default=True, show_default=True, help="Infer dtypes when reading CSV")
 def fractal_engine(
     input_path: str,

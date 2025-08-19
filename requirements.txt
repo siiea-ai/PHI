@@ -7,6 +7,7 @@ imageio-ffmpeg
 pytest
 scipy
 scikit-learn
+networkx
 matplotlib
 h5py
 tensorflow; platform_system != "Darwin" and python_version < "3.13"

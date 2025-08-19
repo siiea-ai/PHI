@@ -13,7 +13,25 @@ phi = (1 + math.sqrt(5)) / 2
 
 ```bash
 python3 -m venv .venv
+.venv/bin/python -m pip install -U pip setuptools wheel
 .venv/bin/python -m pip install -r requirements.txt
+```
+
+- Use the project-local virtualenv at `.venv` for all CLI runs and tests across the repo.
+- To use it from any subfolder, activate once:
+
+```bash
+source .venv/bin/activate
+python -m pytest -q -rA
+python -m phi.cli --help
+deactivate
+```
+
+- Run tests:
+
+```bash
+.venv/bin/python -m pytest -q -rA
+.venv/bin/python -m pytest -vv -k neuro -rA -s   # focus neuro
 ```
 
 ## Dependencies
@@ -33,6 +51,23 @@ Optional (installed via requirements.txt to enable full functionality):
 Platform notes:
 - macOS Apple Silicon uses `tensorflow-macos`.
 - Python 3.13: TensorFlow wheels may be unavailable; Keras export will be skipped unless a compatible TF is installed.
+
+## Documentation
+
+- Quickstart: `docs/Quickstart.md`
+- CLI Cookbook: `docs/CLI-Cookbook.md`
+- Use Cases & Workflows: `docs/Use-Cases.md`
+
+## Documentation and Developer Environment
+
+- Use the single project venv at `.venv` for the entire project (app, tests, all subfolders).
+  - Either run with explicit path (`.venv/bin/python -m phi.cli ...`), or `source .venv/bin/activate` and then use `python -m phi.cli ...` from any directory.
+- CLI entrypoint: always invoke as a module from the repo root for predictable imports: `python -m phi.cli ...`.
+- Testing: `pytest` discovers from the repo root; no need to `pip install` the package.
+- Heavy optional deps: if you want zero skipped tests, prefer Python 3.12 and install via `requirements.txt` (enables TensorFlow and Qiskit per markers).
+- See the sections below for end-to-end task flows:
+  - CLI Cookbook (task recipes)
+  - Use Cases & Workflows (problem → steps → expected outputs)
 
 2) See φ:
 
@@ -328,7 +363,7 @@ Notes:
 - Larger `--spatial-ratio`/`--layer-ratio` increase compression with more loss.
 - `--compare` saves a side-by-side mosaic; `--analyze` or `--analyze-output` writes MSE/RMSE/PSNR and spectral metrics.
 
-CLI note: For all fractal engine subcommands (`ai`, `cosmos`, `multiverse`, `omniverse`, `image`, `video`, `audio`, `three`, `quantum`), `--analyze` is an alias for `--analyze-output`.
+CLI note: For all fractal engine subcommands (`ai`, `cosmos`, `multiverse`, `omniverse`, `image`, `video`, `audio`, `three`, `quantum`, `neuro`), `--analyze` is an alias for `--analyze-output`.
 
 ## AI model compression (ratio)
 
@@ -368,6 +403,65 @@ Notes:
 - Only the `ratio` strategy is implemented (educational demo).
 - Metrics CSV reports per-layer MSE and totals; depends on pandas.
 - Keras export requires TensorFlow installed (`pip install tensorflow`).
+
+## Neuro network compression (ratio)
+
+Graph-based neuron networks with ratio compression (keep every Nth neuron). Generation supports Watts–Strogatz (`ws`) or Barabási–Albert (`ba`) models. Expansion supports interpolation (`interp`) or nearest. Includes adjacency previews, simple rate-model simulation, and metrics.
+
+```bash
+# Generate a full neuro network and adjacency preview
+.venv/bin/python -m phi.cli fractal neuro generate \
+  --output neuro_full.json \
+  --nodes 500 --model ws --ws-k 10 --ws-p 0.1 --seed 42 \
+  --state-init random \
+  --preview neuro_adj.png
+
+# Compress to a compact ratio model
+.venv/bin/python -m phi.cli fractal neuro compress \
+  --input neuro_full.json \
+  --model neuro_model.json \
+  --ratio 4 --method interp
+
+# Expand back to a full network and preview adjacency
+.venv/bin/python -m phi.cli fractal neuro expand \
+  --model neuro_model.json \
+  --output neuro_recon.json \
+  --nodes 500 --method interp --seed 42 \
+  --preview neuro_recon_adj.png
+
+# Simulate simple rate dynamics and write state trajectories (CSV)
+.venv/bin/python -m phi.cli fractal neuro simulate \
+  --model neuro_recon.json \
+  --output neuro_states.csv \
+  --steps 200 --dt 0.05 --leak 0.1 --input-drive 0.05 --noise-std 0.01 --seed 123
+
+# Preview adjacency matrix from any neuro model (full or compressed)
+.venv/bin/python -m phi.cli fractal neuro preview \
+  --model neuro_recon.json \
+  --output neuro_adj.png \
+  --cmap viridis
+
+# Analyze two full neuro bundles (original vs reconstructed)
+.venv/bin/python -m phi.cli fractal neuro analyze \
+  --a neuro_full.json \
+  --b neuro_recon.json \
+  --output neuro_metrics.csv
+
+# One-shot engine: compress + expand + (optional) preview + analyze
+.venv/bin/python -m phi.cli fractal neuro engine \
+  --input neuro_full.json \
+  --recon-output neuro_recon.json \
+  --model neuro_model.json \
+  --ratio 4 --method interp \
+  --nodes 500 --seed 42 \
+  --preview neuro_recon_adj.png \
+  --analyze neuro_engine_metrics.csv
+```
+
+Notes:
+- `--model {ws,ba}` selects generator; `--ws-k`, `--ws-p`, and `--ba-m` configure it.
+- `--method {interp,nearest}` controls expansion; `--ratio` increases compression (more loss).
+- `--preview` writes an adjacency heatmap (requires Matplotlib). Simulation and metrics depend on NumPy/Pandas.
 
 ## 3D point clouds (ratio)
 

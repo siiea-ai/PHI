@@ -688,6 +688,183 @@ def omniverse_preview(model_path: str, image_path: str, cmap: str) -> None:
         sys.exit(1)
 
 
+@fractal_cmd.group("neuro")
+def fractal_neuro() -> None:
+    """Neuro network compression/expansion (ratio strategy)."""
+
+
+@fractal_neuro.command("generate")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output JSON model path (full neuro network)")
+@click.option("--nodes", type=int, required=True, help="Number of neurons (nodes)")
+@click.option("--model", type=click.Choice(["ws", "ba"], case_sensitive=False), default="ws", show_default=True, help="Graph generator model: Watts-Strogatz (ws) or Barabasi-Albert (ba)")
+@click.option("--ws-k", type=int, default=10, show_default=True, help="WS: each node connected to k nearest neighbors in ring topology")
+@click.option("--ws-p", type=float, default=0.1, show_default=True, help="WS: rewiring probability")
+@click.option("--ba-m", type=int, default=3, show_default=True, help="BA: edges to attach from a new node to existing nodes")
+@click.option("--seed", type=int, default=None, help="Random seed (optional)")
+@click.option("--state-init", type=click.Choice(["random", "zeros"], case_sensitive=False), default="random", show_default=True, help="Initial neuron state initialization")
+@click.option("--preview", "preview_path", type=click.Path(dir_okay=False), default=None, help="Optional adjacency PNG path")
+def neuro_generate(output_path: str, nodes: int, model: str, ws_k: int, ws_p: float, ba_m: int, seed: Optional[int], state_init: str, preview_path: Optional[str]) -> None:
+    """Generate a full neuro network bundle (JSON)."""
+    try:
+        from . import neuro as nmod  # lazy import
+        bundle = nmod.generate_full_network(
+            nodes=nodes,
+            model=model.lower(),
+            ws_k=ws_k,
+            ws_p=ws_p,
+            ba_m=ba_m,
+            seed=seed,
+            state_init=state_init.lower(),
+        )
+        nmod.save_model(bundle, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if preview_path:
+            nmod.save_adjacency_image(bundle, preview_path)
+            click.echo(f"Wrote adjacency: {preview_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_neuro.command("compress")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full neuro JSON path")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), required=True, help="Output compressed JSON model path")
+@click.option("--ratio", type=int, default=4, show_default=True, help="Keep every Nth neuron")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method to record in model")
+def neuro_compress(input_path: str, model_path: str, ratio: int, method: str) -> None:
+    """Compress a full neuro network into a compact ratio model (educational)."""
+    try:
+        from . import neuro as nmod  # lazy import
+        full = nmod.load_model(input_path)
+        cfg = nmod.NeuroConfig(strategy="ratio", ratio=ratio, method=method.lower())
+        bundle = nmod.compress_network(full, cfg)
+        nmod.save_model(bundle, model_path)
+        click.echo(f"Wrote model: {model_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_neuro.command("expand")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input neuro JSON path (compressed or full)")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output full neuro JSON path")
+@click.option("--nodes", type=int, default=None, help="Target number of neurons (optional)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default=None, help="Override expansion method recorded in model")
+@click.option("--seed", type=int, default=None, help="Random seed for stochastic topology regeneration (optional)")
+@click.option("--preview", "preview_path", type=click.Path(dir_okay=False), default=None, help="Optional adjacency PNG path")
+def neuro_expand(model_path: str, output_path: str, nodes: Optional[int], method: Optional[str], seed: Optional[int], preview_path: Optional[str]) -> None:
+    """Expand a neuro model (compressed or full) to a full network bundle."""
+    try:
+        from . import neuro as nmod  # lazy import
+        bundle = nmod.load_model(model_path)
+        full = nmod.expand_network(bundle, target_nodes=nodes, method=(method.lower() if method else None), seed=seed)
+        nmod.save_model(full, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if preview_path:
+            nmod.save_adjacency_image(full, preview_path)
+            click.echo(f"Wrote adjacency: {preview_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_neuro.command("simulate")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full neuro JSON path")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output CSV path of state trajectories")
+@click.option("--steps", type=int, default=100, show_default=True, help="Simulation steps (outputs steps+1 rows including initial state)")
+@click.option("--dt", type=float, default=0.1, show_default=True, help="Time step size")
+@click.option("--leak", type=float, default=0.1, show_default=True, help="Leak term coefficient")
+@click.option("--input-drive", type=float, default=0.0, show_default=True, help="External input drive added to all neurons")
+@click.option("--noise-std", type=float, default=0.0, show_default=True, help="Gaussian noise std added to input drive")
+@click.option("--seed", type=int, default=None, help="Random seed for noise (optional)")
+def neuro_simulate(model_path: str, output_path: str, steps: int, dt: float, leak: float, input_drive: float, noise_std: float, seed: Optional[int]) -> None:
+    """Run simple rate-based neuron simulation on a full neuro bundle and write CSV."""
+    try:
+        from . import neuro as nmod  # lazy import
+        import numpy as np  # lazy inside command
+        import pandas as pd  # lazy inside command
+
+        bundle = nmod.load_model(model_path)
+        traj = nmod.simulate_states(bundle, steps=steps, dt=dt, leak=leak, input_drive=input_drive, noise_std=noise_std, seed=seed)
+        t = np.arange(traj.shape[0], dtype=np.int32)
+        cols = ["t"] + [f"x{i}" for i in range(traj.shape[1])]
+        df = pd.DataFrame(np.column_stack([t, traj]), columns=cols)
+        df.to_csv(output_path, index=False)
+        click.echo(f"Wrote CSV: {output_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_neuro.command("preview")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input neuro JSON path (full or compressed)")
+@click.option("--output", "image_path", type=click.Path(dir_okay=False), required=True, help="Output adjacency PNG path")
+@click.option("--cmap", type=str, default="viridis", show_default=True, help="Matplotlib colormap name")
+def neuro_preview(model_path: str, image_path: str, cmap: str) -> None:
+    """Export an adjacency matrix image from a neuro model (full or compressed)."""
+    try:
+        from . import neuro as nmod  # lazy import
+        bundle = nmod.load_model(model_path)
+        nmod.save_adjacency_image(bundle, image_path, cmap=cmap)
+        click.echo(f"Wrote image: {image_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_neuro.command("analyze")
+@click.option("--a", "a_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full neuro JSON path A")
+@click.option("--b", "b_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full neuro JSON path B")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output metrics CSV path")
+def neuro_analyze(a_path: str, b_path: str, output_path: str) -> None:
+    """Compute metrics between two full neuro bundles and write CSV."""
+    try:
+        from . import neuro as nmod  # lazy import
+        mdf = nmod.metrics_from_paths(a_path, b_path)
+        mdf.to_csv(output_path, index=False)
+        click.echo(f"Wrote analysis: {output_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_neuro.command("engine")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full neuro JSON path")
+@click.option("--recon-output", "recon_output", type=click.Path(dir_okay=False), required=True, help="Output full neuro JSON path (reconstructed)")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), default=None, help="Optional path to save compressed model JSON")
+@click.option("--ratio", type=int, default=4, show_default=True, help="Keep every Nth neuron")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
+@click.option("--nodes", type=int, default=None, help="Target number of neurons for reconstruction (optional; defaults to input nodes)")
+@click.option("--seed", type=int, default=None, help="Random seed for topology regeneration (optional)")
+@click.option("--preview", "preview_path", type=click.Path(dir_okay=False), default=None, help="Optional adjacency PNG of reconstruction")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (state MSE and degree-hist L1)")
+def neuro_engine(input_path: str, recon_output: str, model_path: Optional[str], ratio: int, method: str, nodes: Optional[int], seed: Optional[int], preview_path: Optional[str], analyze_output: Optional[str]) -> None:
+    """Compress + expand a neuro network; optionally save model, metrics, and adjacency preview."""
+    try:
+        from . import neuro as nmod  # lazy import
+        full_in = nmod.load_model(input_path)
+        cfg = nmod.NeuroConfig(strategy="ratio", ratio=ratio, method=method.lower())
+        comp = nmod.compress_network(full_in, cfg)
+        if model_path:
+            nmod.save_model(comp, model_path)
+            click.echo(f"Wrote model: {model_path}")
+        target_nodes = int(nodes) if nodes is not None else int(full_in.get("nodes", 0))
+        full_out = nmod.expand_network(comp, target_nodes=target_nodes, method=method.lower(), seed=seed)
+        nmod.save_model(full_out, recon_output)
+        click.echo(f"Wrote model: {recon_output}")
+        if preview_path:
+            nmod.save_adjacency_image(full_out, preview_path)
+            click.echo(f"Wrote adjacency: {preview_path}")
+        if analyze_output:
+            import pandas as pd  # lazy inside command
+            mdf = nmod.metrics_from_paths(input_path, recon_output)
+            mdf.to_csv(analyze_output, index=False)
+            click.echo(f"Wrote analysis: {analyze_output}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 @fractal_cmd.group("video")
 def fractal_video() -> None:
     """Video compression/expansion (ratio strategy)."""

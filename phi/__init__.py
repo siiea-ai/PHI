@@ -17,6 +17,7 @@ __all__ = [
     "audio",
     "video",
     "ai",
+    "neuro",
     "three",
     "quantum",
     "cosmos",

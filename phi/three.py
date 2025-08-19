@@ -219,20 +219,28 @@ def generate_mandelbulb_julia(
     batch = 4096
     tries = 0
     def bulb_pow(z: np.ndarray) -> np.ndarray:
-        # Convert to spherical
+        # Convert to spherical with numerical guards to avoid overflow warnings
         x, y, zc = z[:, 0], z[:, 1], z[:, 2]
-        r = np.sqrt(x * x + y * y + zc * zc) + 1e-12
-        theta = np.arccos(np.clip(zc / r, -1.0, 1.0))
-        phi = np.arctan2(y, x)
-        rp = r ** power
-        thetap = theta * power
-        phip = phi * power
-        sint = np.sin(thetap)
-        return np.stack([
-            rp * sint * np.cos(phip),
-            rp * sint * np.sin(phip),
-            rp * np.cos(thetap),
-        ], axis=1)
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            r = np.sqrt(x * x + y * y + zc * zc) + 1e-12
+            # Clamp radius to avoid huge powers causing overflow
+            r_clamped = np.clip(r, 0.0, 1e6)
+            theta = np.arccos(np.clip(zc / r_clamped, -1.0, 1.0))
+            phi = np.arctan2(y, x)
+            rp = r_clamped ** power
+            thetap = theta * power
+            phip = phi * power
+            sint = np.sin(thetap)
+            out = np.stack([
+                rp * sint * np.cos(phip),
+                rp * sint * np.sin(phip),
+                rp * np.cos(thetap),
+            ], axis=1)
+            # Replace any non-finite values introduced by numerical issues
+            out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+            # Clip extremes to keep subsequent squared distances numerically stable
+            out = np.clip(out, -1e9, 1e9)
+            return out
 
     cvec = np.array(c, dtype=np.float32)[None, :]
     while len(out) < n_points and tries < 1000:

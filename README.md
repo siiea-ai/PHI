@@ -271,9 +271,48 @@ Notes:
 - `--spatial-ratio` and `--temporal-ratio` increase compression at the cost of quality; larger values mean more loss.
 - `--compare` saves a side-by-side image of the first frames; `--analyze-output` writes MSE/RMSE/PSNR across sampled frames.
 
+## AI model compression (ratio)
+
+Compress fully-connected neural nets by decimating hidden neurons (keep every Nth), then expand back via nearest or linear blend. Bundles are JSON with base64 numpy weights for portability. Optional Keras export.
+
+```bash
+# Generate a full model bundle
+.venv/bin/python -m phi.cli fractal ai generate \
+  --output ai_full.json \
+  --input-dim 16 --output-dim 4 \
+  --depth 3 --base-width 64 --mode phi \
+  --seed 42
+
+# Compress to a ratio model
+.venv/bin/python -m phi.cli fractal ai compress \
+  --input ai_full.json \
+  --model ai_model.json \
+  --ratio 2 --method interp
+
+# Expand back to target hidden widths
+.venv/bin/python -m phi.cli fractal ai expand \
+  --model ai_model.json \
+  --output ai_recon.json \
+  --hidden 64,40,25 --method interp
+
+# One-shot engine: compress + expand + analyze (and optional Keras export)
+.venv/bin/python -m phi.cli fractal ai engine \
+  --input ai_full.json \
+  --recon-output ai_recon.json \
+  --model ai_model.json \
+  --ratio 2 --method interp \
+  --analyze-output ai_metrics.csv \
+  --export-keras ai_model.h5
+```
+
+Notes:
+- Only the `ratio` strategy is implemented (educational demo).
+- Metrics CSV reports per-layer MSE and totals; depends on pandas.
+- Keras export requires TensorFlow installed (`pip install tensorflow`).
+
 ## 3D point clouds (ratio)
 
-Ratio-based 3D point cloud compression by keeping every Nth point, with expansion via random interpolation or nearest resampling. I/O uses ASCII PLY files. Includes optional 2D projection previews and an approximate symmetric Chamfer distance metric.
+Ratio-based 3D point cloud compression by keeping every Nth point, with expansion via random interpolation or nearest resampling. I/O supports .ply (ASCII), .npz (compressed), and .npy. Includes optional 2D projection previews and Matplotlib 3D plots, plus an approximate symmetric Chamfer distance metric (selectable nearest-neighbor backend).
 
 ```bash
 # Generate a Sierpinski tetrahedron (chaos game) and preview
@@ -302,13 +341,14 @@ Ratio-based 3D point cloud compression by keeping every Nth point, with expansio
   --model three_model.json \
   --ratio 4 --method interp \
   --compare three_compare.png --axis z \
-  --analyze-output three_metrics.csv --sample-points 1500
+  --analyze-output three_metrics.csv --sample-points 1500 --nn-method auto
 ```
 
 Notes:
-- Only the `ratio` strategy is implemented for 3D in this educational module.
-- Metrics CSV computes an approximate symmetric Chamfer distance (RMSE and squared mean) using random subsampling for speed; depends on pandas.
-- Previews render simple orthographic projections (x/y/z).
+- I/O supports `.ply` (ASCII), `.npz` (compressed), and `.npy`.
+- Optional 3D plotting via Matplotlib: use `--plot3d` to save a PNG or `--plot3d-show` to display.
+- Metrics CSV computes an approximate symmetric Chamfer distance (RMSE and squared mean) using random subsampling; depends on pandas.
+- Choose nearest-neighbor backend for metrics via `--nn-method {auto,kd,sklearn,brute}`. KD-tree (SciPy) and scikit-learn are optional; falls back to brute force.
 
 ## Audio compression (ratio)
 

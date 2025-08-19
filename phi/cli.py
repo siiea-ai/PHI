@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Optional
+from typing import Optional, Tuple
 import json
 
 import click
@@ -63,10 +63,231 @@ def transform(input_path: str, output_path: str, columns: Optional[str], op: str
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
+
 @main.group(name="fractal")
 def fractal_cmd() -> None:
     """Fractal compression/expansion commands."""
+@fractal_cmd.group("ai")
+def fractal_ai() -> None:
+    """AI model compression/expansion (ratio strategy)."""
 
+
+@fractal_ai.command("generate")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output JSON model path (full model)")
+@click.option("--input-dim", type=int, required=True, help="Input dimension")
+@click.option("--output-dim", type=int, required=True, help="Output dimension")
+@click.option("--depth", type=int, default=3, show_default=True, help="Hidden depth (number of hidden layers)")
+@click.option("--base-width", type=int, default=64, show_default=True, help="Base hidden width")
+@click.option("--mode", type=click.Choice(["phi", "fibonacci", "fixed"], case_sensitive=False), default="phi", show_default=True, help="Hidden width schedule")
+@click.option("--act-hidden", type=str, default="relu", show_default=True, help="Activation for hidden layers")
+@click.option("--act-output", type=str, default="sigmoid", show_default=True, help="Activation for output layer")
+@click.option("--seed", type=int, default=None, help="Random seed (optional)")
+@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.h5)")
+def ai_generate(output_path: str, input_dim: int, output_dim: int, depth: int, base_width: int, mode: str, act_hidden: str, act_output: str, seed: Optional[int], export_keras: Optional[str]) -> None:
+    """Generate a full AI model bundle (JSON)."""
+    try:
+        from . import ai as ai_mod  # lazy import
+        bundle = ai_mod.generate_full_model(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            depth=depth,
+            base_width=base_width,
+            mode=mode.lower(),
+            act_hidden=act_hidden,
+            act_output=act_output,
+            seed=seed,
+        )
+        ai_mod.save_model(bundle, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if export_keras:
+            ai_mod.export_keras(bundle, export_keras)
+            click.echo(f"Wrote Keras model: {export_keras}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_ai.command("compress")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full model JSON path")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), required=True, help="Output compressed JSON model path")
+@click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth hidden neuron")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method to record in model")
+def ai_compress(input_path: str, model_path: str, ratio: int, method: str) -> None:
+    """Compress a full AI model bundle into a compact ratio model (educational)."""
+    try:
+        from . import ai as ai_mod  # lazy import
+        full = ai_mod.load_model(input_path)
+        cfg = ai_mod.AIConfig(strategy="ratio", ratio=ratio, method=method.lower())
+        bundle = ai_mod.compress_model(full, cfg)
+        ai_mod.save_model(bundle, model_path)
+        click.echo(f"Wrote model: {model_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_ai.command("expand")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input compressed JSON model path")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output full JSON model path")
+@click.option("--hidden", type=str, default=None, help="Comma-separated target hidden widths (e.g., 64,32,16)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default=None, help="Override expansion method recorded in model")
+@click.option("--seed", type=int, default=None, help="Random seed for stochastic expansion (optional)")
+@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.h5)")
+def ai_expand(model_path: str, output_path: str, hidden: Optional[str], method: Optional[str], seed: Optional[int], export_keras: Optional[str]) -> None:
+    """Expand a compressed AI model bundle back to a full model bundle."""
+    try:
+        from . import ai as ai_mod  # lazy import
+        bundle = ai_mod.load_model(model_path)
+        target_hidden = None
+        if hidden:
+            try:
+                target_hidden = [int(x.strip()) for x in hidden.split(",") if x.strip()]
+            except Exception:
+                raise click.UsageError("--hidden must be a comma-separated list of integers, e.g., 64,32,16")
+        full = ai_mod.expand_model(bundle, target_hidden=target_hidden, method=(method.lower() if method else None), seed=seed)
+        ai_mod.save_model(full, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if export_keras:
+            ai_mod.export_keras(full, export_keras)
+            click.echo(f"Wrote Keras model: {export_keras}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_ai.command("engine")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full model JSON path")
+@click.option("--recon-output", "recon_output", type=click.Path(dir_okay=False), required=True, help="Output full model JSON path (reconstructed)")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), default=None, help="Optional path to save compressed model JSON")
+@click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth hidden neuron")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
+@click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (per-layer MSE and totals)")
+@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export reconstructed Keras model (.h5)")
+def ai_engine(input_path: str, recon_output: str, model_path: Optional[str], ratio: int, method: str, analyze_output: Optional[str], export_keras: Optional[str]) -> None:
+    """Compress + expand an AI model; optionally save compressed model, metrics, and Keras export."""
+    try:
+        from . import ai as ai_mod  # lazy import
+        full_in = ai_mod.load_model(input_path)
+        cfg = ai_mod.AIConfig(strategy="ratio", ratio=ratio, method=method.lower())
+        comp = ai_mod.compress_model(full_in, cfg)
+        if model_path:
+            ai_mod.save_model(comp, model_path)
+            click.echo(f"Wrote model: {model_path}")
+        target_hidden = [int(x) for x in full_in.get("hidden", [])]
+        full_out = ai_mod.expand_model(comp, target_hidden=target_hidden, method=method.lower())
+        ai_mod.save_model(full_out, recon_output)
+        click.echo(f"Wrote model: {recon_output}")
+        if analyze_output:
+            mdf = ai_mod.metrics_from_paths(input_path, recon_output)
+            mdf.to_csv(analyze_output, index=False)
+            click.echo(f"Wrote analysis: {analyze_output}")
+        if export_keras:
+            ai_mod.export_keras(full_out, export_keras)
+            click.echo(f"Wrote Keras model: {export_keras}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_cmd.group("quantum")
+def fractal_quantum() -> None:
+    """Quantum circuit compression/expansion (ratio strategy)."""
+
+
+@fractal_quantum.command("generate")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output JSON model path (full circuit)")
+@click.option("--qubits", type=int, required=True, help="Number of qubits")
+@click.option("--depth", type=int, default=1, show_default=True, help="Pattern depth (repetitions)")
+@click.option("--seed", type=int, default=None, help="Random seed (optional)")
+@click.option("--export-qasm", type=click.Path(dir_okay=False), default=None, help="Optional path to export OpenQASM 2.0 (.qasm)")
+def quantum_generate(output_path: str, qubits: int, depth: int, seed: Optional[int], export_qasm: Optional[str]) -> None:
+    """Generate a full quantum circuit bundle (JSON)."""
+    try:
+        from . import quantum as qmod  # lazy import
+        bundle = qmod.generate_full_circuit(num_qubits=qubits, depth=depth, seed=seed)
+        qmod.save_model(bundle, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if export_qasm:
+            qmod.export_qasm(bundle, export_qasm)
+            click.echo(f"Wrote QASM: {export_qasm}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_quantum.command("compress")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full circuit JSON path")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), required=True, help="Output compressed JSON model path")
+@click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth qubit")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method to record in model")
+def quantum_compress(input_path: str, model_path: str, ratio: int, method: str) -> None:
+    """Compress a full quantum circuit into a compact ratio model (educational)."""
+    try:
+        from . import quantum as qmod  # lazy import
+        full = qmod.load_model(input_path)
+        cfg = qmod.QuantumConfig(strategy="ratio", ratio=ratio, method=method.lower())
+        bundle = qmod.compress_circuit(full, cfg)
+        qmod.save_model(bundle, model_path)
+        click.echo(f"Wrote model: {model_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_quantum.command("expand")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input compressed JSON model path (or full)")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output full circuit JSON path")
+@click.option("--qubits", type=int, default=None, help="Target number of qubits (optional)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default=None, help="Override expansion method recorded in model")
+@click.option("--export-qasm", type=click.Path(dir_okay=False), default=None, help="Optional path to export OpenQASM 2.0 (.qasm)")
+def quantum_expand(model_path: str, output_path: str, qubits: Optional[int], method: Optional[str], export_qasm: Optional[str]) -> None:
+    """Expand a compressed quantum circuit bundle back to a full circuit bundle."""
+    try:
+        from . import quantum as qmod  # lazy import
+        bundle = qmod.load_model(model_path)
+        full = qmod.expand_circuit(bundle, target_qubits=qubits, method=(method.lower() if method else None))
+        qmod.save_model(full, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if export_qasm:
+            qmod.export_qasm(full, export_qasm)
+            click.echo(f"Wrote QASM: {export_qasm}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_quantum.command("engine")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full circuit JSON path")
+@click.option("--recon-output", "recon_output", type=click.Path(dir_okay=False), required=True, help="Output full circuit JSON path (reconstructed)")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), default=None, help="Optional path to save compressed model JSON")
+@click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth qubit")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
+@click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (gate counts and depth)")
+@click.option("--export-qasm", type=click.Path(dir_okay=False), default=None, help="Optional path to export reconstructed OpenQASM 2.0 (.qasm)")
+def quantum_engine(input_path: str, recon_output: str, model_path: Optional[str], ratio: int, method: str, analyze_output: Optional[str], export_qasm: Optional[str]) -> None:
+    """Compress + expand a quantum circuit; optionally save compressed model, metrics, and QASM export."""
+    try:
+        from . import quantum as qmod  # lazy import
+        full_in = qmod.load_model(input_path)
+        cfg = qmod.QuantumConfig(strategy="ratio", ratio=ratio, method=method.lower())
+        comp = qmod.compress_circuit(full_in, cfg)
+        if model_path:
+            qmod.save_model(comp, model_path)
+            click.echo(f"Wrote model: {model_path}")
+        target_qubits = int(full_in.get("num_qubits", 0))
+        full_out = qmod.expand_circuit(comp, target_qubits=target_qubits, method=method.lower())
+        qmod.save_model(full_out, recon_output)
+        click.echo(f"Wrote model: {recon_output}")
+        if analyze_output:
+            mdf = qmod.metrics_from_paths(input_path, recon_output)
+            mdf.to_csv(analyze_output, index=False)
+            click.echo(f"Wrote analysis: {analyze_output}")
+        if export_qasm:
+            qmod.export_qasm(full_out, export_qasm)
+            click.echo(f"Wrote QASM: {export_qasm}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 @fractal_cmd.group("video")
 def fractal_video() -> None:
@@ -189,30 +410,63 @@ def fractal_three() -> None:
 
 
 @fractal_three.command("generate")
-@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output PLY path")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output point cloud path (.ply/.npz/.npy)")
 @click.option("--points", type=int, default=20000, show_default=True, help="Number of points to generate")
 @click.option("--scale", type=float, default=1.0, show_default=True, help="Model scale")
 @click.option("--seed", type=int, default=None, help="Random seed (optional)")
+@click.option("--fractal", type=click.Choice(["sierpinski", "menger", "mandelbulb"], case_sensitive=False), default="sierpinski", show_default=True, help="Fractal type to generate")
+@click.option("--level", type=int, default=3, show_default=True, help="Menger sponge level (for fractal=menger)")
+@click.option("--power", type=int, default=8, show_default=True, help="Mandelbulb power (for fractal=mandelbulb)")
+@click.option("--c", nargs=3, type=float, default=(0.2, 0.35, 0.0), show_default=True, help="Mandelbulb Julia constant c=(cx cy cz)")
+@click.option("--bounds", type=float, default=1.5, show_default=True, help="Mandelbulb sampling bounds (for fractal=mandelbulb)")
+@click.option("--max-iter", type=int, default=20, show_default=True, help="Mandelbulb max iterations (for fractal=mandelbulb)")
+@click.option("--bail", type=float, default=4.0, show_default=True, help="Mandelbulb bailout radius (for fractal=mandelbulb)")
 @click.option("--preview", type=click.Path(dir_okay=False), default=None, help="Optional 2D projection PNG path")
 @click.option("--axis", type=click.Choice(["x", "y", "z"], case_sensitive=False), default="z", show_default=True, help="Projection axis for preview")
 @click.option("--height", type=int, default=400, show_default=True, help="Preview image height")
-def three_generate(output_path: str, points: int, scale: float, seed: Optional[int], preview: Optional[str], axis: str, height: int) -> None:
-    """Generate a Sierpinski tetrahedron point cloud and save to PLY (optionally preview)."""
+@click.option("--plot3d", type=click.Path(dir_okay=False), default=None, help="Optional Matplotlib 3D scatter PNG path")
+@click.option("--plot3d-show/--no-plot3d-show", default=False, show_default=True, help="Show interactive 3D plot (requires matplotlib)")
+@click.option("--point-size", type=float, default=1.0, show_default=True, help="Matplotlib scatter point size")
+@click.option("--elev", type=float, default=20.0, show_default=True, help="Matplotlib 3D elevation")
+@click.option("--azim", type=float, default=30.0, show_default=True, help="Matplotlib 3D azimuth")
+def three_generate(output_path: str, points: int, scale: float, seed: Optional[int], fractal: str, level: int, power: int, c: Tuple[float, float, float], bounds: float, max_iter: int, bail: float, preview: Optional[str], axis: str, height: int, plot3d: Optional[str], plot3d_show: bool, point_size: float, elev: float, azim: float) -> None:
+    """Generate a 3D fractal point cloud and save (optionally preview/plot)."""
     try:
         from . import three as three_mod  # lazy import
-        pts = three_mod.generate_sierpinski_tetrahedron(n_points=points, scale=scale, seed=seed)
-        three_mod.save_point_cloud_ply(pts, output_path)
-        click.echo(f"Wrote PLY: {output_path}")
+        f = fractal.lower()
+        if f == "sierpinski":
+            pts = three_mod.generate_sierpinski_tetrahedron(n_points=points, scale=scale, seed=seed)
+        elif f == "menger":
+            pts = three_mod.generate_menger_sponge(n_points=points, level=level, scale=scale, seed=seed)
+        elif f == "mandelbulb":
+            pts = three_mod.generate_mandelbulb_julia(
+                n_points=points,
+                power=power,
+                c=(float(c[0]), float(c[1]), float(c[2])),
+                bounds=bounds,
+                max_iter=max_iter,
+                bail=bail,
+                scale=scale,
+                seed=seed,
+            )
+        else:
+            raise click.UsageError(f"Unknown fractal: {fractal}")
+        three_mod.save_point_cloud(pts, output_path)
+        click.echo(f"Wrote point cloud: {output_path}")
         if preview:
             three_mod.save_projection_from_ply(output_path, preview, axis=axis.lower(), height=height)
             click.echo(f"Wrote preview: {preview}")
+        if plot3d or plot3d_show:
+            three_mod.plot_point_cloud_matplotlib(pts, save_path=plot3d, show=plot3d_show, size=point_size, elev=elev, azim=azim)
+            if plot3d:
+                click.echo(f"Wrote 3D plot: {plot3d}")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
 @fractal_three.command("compress")
-@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input PLY path")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input point cloud path (.ply/.npz/.npy)")
 @click.option("--model", "model_path", type=click.Path(dir_okay=False), required=True, help="Output JSON model path")
 @click.option("--ratio", type=int, default=4, show_default=True, help="Keep every Nth point")
 @click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method to record in model")
@@ -220,7 +474,7 @@ def three_compress(input_path: str, model_path: str, ratio: int, method: str) ->
     """Compress a point cloud by point decimation into a JSON model (educational)."""
     try:
         from . import three as three_mod
-        pts = three_mod.load_point_cloud_ply(input_path)
+        pts = three_mod.load_point_cloud(input_path)
         cfg = three_mod.ThreeConfig(strategy="ratio", ratio=ratio, method=method.lower())
         bundle = three_mod.compress_point_cloud(pts, cfg)
         three_mod.save_model(bundle, model_path)
@@ -232,31 +486,40 @@ def three_compress(input_path: str, model_path: str, ratio: int, method: str) ->
 
 @fractal_three.command("expand")
 @click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input JSON model path")
-@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output PLY path")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output point cloud path (.ply/.npz/.npy)")
 @click.option("--points", type=int, default=None, help="Target number of output points (optional)")
 @click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default=None, help="Override expansion method recorded in model")
 @click.option("--preview", type=click.Path(dir_okay=False), default=None, help="Optional 2D projection PNG path")
 @click.option("--axis", type=click.Choice(["x", "y", "z"], case_sensitive=False), default="z", show_default=True, help="Projection axis for preview")
 @click.option("--height", type=int, default=400, show_default=True, help="Preview image height")
-def three_expand(model_path: str, output_path: str, points: Optional[int], method: Optional[str], preview: Optional[str], axis: str, height: int) -> None:
+@click.option("--plot3d", type=click.Path(dir_okay=False), default=None, help="Optional Matplotlib 3D scatter PNG path")
+@click.option("--plot3d-show/--no-plot3d-show", default=False, show_default=True, help="Show interactive 3D plot (requires matplotlib)")
+@click.option("--point-size", type=float, default=1.0, show_default=True, help="Matplotlib scatter point size")
+@click.option("--elev", type=float, default=20.0, show_default=True, help="Matplotlib 3D elevation")
+@click.option("--azim", type=float, default=30.0, show_default=True, help="Matplotlib 3D azimuth")
+def three_expand(model_path: str, output_path: str, points: Optional[int], method: Optional[str], preview: Optional[str], axis: str, height: int, plot3d: Optional[str], plot3d_show: bool, point_size: float, elev: float, azim: float) -> None:
     """Expand a 3D model back into a point cloud (PLY)."""
     try:
         from . import three as three_mod
         bundle = three_mod.load_model(model_path)
         recon = three_mod.expand_point_cloud(bundle, target_points=points, method=(method.lower() if method else None))
-        three_mod.save_point_cloud_ply(recon, output_path)
-        click.echo(f"Wrote PLY: {output_path}")
+        three_mod.save_point_cloud(recon, output_path)
+        click.echo(f"Wrote point cloud: {output_path}")
         if preview:
             three_mod.save_projection_from_ply(output_path, preview, axis=axis.lower(), height=height)
             click.echo(f"Wrote preview: {preview}")
+        if plot3d or plot3d_show:
+            three_mod.plot_point_cloud_matplotlib(recon, save_path=plot3d, show=plot3d_show, size=point_size, elev=elev, azim=azim)
+            if plot3d:
+                click.echo(f"Wrote 3D plot: {plot3d}")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
 @fractal_three.command("engine")
-@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input PLY path")
-@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output reconstructed PLY path")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input point cloud path (.ply/.npz/.npy)")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output reconstructed point cloud path (.ply/.npz/.npy)")
 @click.option("--model", "model_path", type=click.Path(dir_okay=False), default=None, help="Optional model JSON save path")
 @click.option("--ratio", type=int, default=4, show_default=True, help="Keep every Nth point")
 @click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
@@ -265,6 +528,12 @@ def three_expand(model_path: str, output_path: str, points: Optional[int], metho
 @click.option("--axis", type=click.Choice(["x", "y", "z"], case_sensitive=False), default="z", show_default=True, help="Projection axis for compare image")
 @click.option("--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (approx. symmetric Chamfer distance)")
 @click.option("--sample-points", type=int, default=2000, show_default=True, help="Number of points to sample for metrics")
+@click.option("--nn-method", type=click.Choice(["auto", "kd", "sklearn", "brute"], case_sensitive=False), default="auto", show_default=True, help="Nearest-neighbor method for metrics")
+@click.option("--plot3d", type=click.Path(dir_okay=False), default=None, help="Optional Matplotlib 3D scatter PNG path (of reconstruction)")
+@click.option("--plot3d-show/--no-plot3d-show", default=False, show_default=True, help="Show interactive 3D plot (requires matplotlib)")
+@click.option("--point-size", type=float, default=1.0, show_default=True, help="Matplotlib scatter point size")
+@click.option("--elev", type=float, default=20.0, show_default=True, help="Matplotlib 3D elevation")
+@click.option("--azim", type=float, default=30.0, show_default=True, help="Matplotlib 3D azimuth")
 def three_engine(
     input_path: str,
     output_path: str,
@@ -276,11 +545,17 @@ def three_engine(
     axis: str,
     analyze_output: Optional[str],
     sample_points: int,
+    nn_method: str,
+    plot3d: Optional[str],
+    plot3d_show: bool,
+    point_size: float,
+    elev: float,
+    azim: float,
 ) -> None:
     """Compress + expand a point cloud; optionally save model, compare, and metrics."""
     try:
         from . import three as three_mod
-        pts = three_mod.load_point_cloud_ply(input_path)
+        pts = three_mod.load_point_cloud(input_path)
         cfg = three_mod.ThreeConfig(strategy="ratio", ratio=ratio, method=method.lower())
         bundle = three_mod.compress_point_cloud(pts, cfg)
         if model_path:
@@ -288,15 +563,19 @@ def three_engine(
             click.echo(f"Wrote model: {model_path}")
         target = points if points is not None else int(bundle.get("orig_count", len(pts)))
         recon = three_mod.expand_point_cloud(bundle, target_points=target, method=method.lower())
-        three_mod.save_point_cloud_ply(recon, output_path)
-        click.echo(f"Wrote PLY: {output_path}")
+        three_mod.save_point_cloud(recon, output_path)
+        click.echo(f"Wrote point cloud: {output_path}")
         if compare_path:
             three_mod.save_compare_projection_image(input_path, output_path, compare_path, axis=axis.lower())
             click.echo(f"Wrote compare image: {compare_path}")
         if analyze_output:
-            mdf = three_mod.metrics_from_paths(input_path, output_path, sample_points=sample_points)
+            mdf = three_mod.metrics_from_paths(input_path, output_path, sample_points=sample_points, nn_method=nn_method)
             mdf.to_csv(analyze_output, index=False)
             click.echo(f"Wrote analysis: {analyze_output}")
+        if plot3d or plot3d_show:
+            three_mod.plot_point_cloud_matplotlib(recon, save_path=plot3d, show=plot3d_show, size=point_size, elev=elev, azim=azim)
+            if plot3d:
+                click.echo(f"Wrote 3D plot: {plot3d}")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

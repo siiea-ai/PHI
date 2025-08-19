@@ -16,5 +16,7 @@ __all__ = [
     "image",
     "audio",
     "video",
+    "ai",
     "three",
+    "quantum",
 ]

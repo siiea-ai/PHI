@@ -4,3 +4,11 @@ click
 Pillow
 imageio
 imageio-ffmpeg
+pytest
+scipy
+scikit-learn
+matplotlib
+h5py
+tensorflow; platform_system != "Darwin" and python_version < "3.13"
+tensorflow-macos; platform_system == "Darwin" and platform_machine == "arm64" and python_version < "3.13"
+qiskit-terra; python_version < "3.13"

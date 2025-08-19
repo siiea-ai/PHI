@@ -55,8 +55,9 @@ Platform notes:
 ## Documentation
 
 - Quickstart: `docs/Quickstart.md`
-- CLI Cookbook: `docs/CLI-Cookbook.md`
+- Cookbook: `docs/Cookbook.md`
 - Use Cases & Workflows: `docs/Use-Cases.md`
+- Programmatic Neuro API example: see "Neuro API (programmatic)" in `docs/Cookbook.md`
 
 ## Documentation and Developer Environment
 

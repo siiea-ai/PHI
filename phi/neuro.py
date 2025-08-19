@@ -95,10 +95,12 @@ def _edges_to_adj(edges: np.ndarray, n: int) -> np.ndarray:
         return a
     u = edges[0, :].astype(int)
     v = edges[1, :].astype(int)
-    u = u[(u >= 0) & (u < n) & (v >= 0) & (v < n)]
-    v = v[(u >= 0) & (u < n) & (v >= 0) & (v < n)]
-    a[u, v] = 1.0
-    a[v, u] = 1.0
+    mask = (u >= 0) & (u < n) & (v >= 0) & (v < n)
+    if np.any(mask):
+        uu = u[mask]
+        vv = v[mask]
+        a[uu, vv] = 1.0
+        a[vv, uu] = 1.0
     np.fill_diagonal(a, 0.0)
     return a
 
@@ -334,23 +336,25 @@ def simulate_states(bundle: Dict, steps: int = 100, dt: float = 0.1, leak: float
     n = int(bundle.get("nodes", 0))
     edges = _b64_npz_to_arr(bundle["edges_npz_b64"], dtype=np.int32)
     state0 = _b64_npz_to_arr(bundle["state_npz_b64"], dtype=np.float32)
-    x = state0.astype(np.float32).copy()
+    # Use float64 internally for better numerical stability
+    x = state0.astype(np.float64, copy=True)
 
-    A = _edges_to_adj(edges, n)
-    deg = np.maximum(A.sum(axis=1, keepdims=True), 1.0)
-    W = (A / deg).astype(np.float32)  # simple normalized weights
+    A = _edges_to_adj(edges, n).astype(np.float64, copy=False)
+    deg = A.sum(axis=1, keepdims=True, dtype=np.float64)
+    deg[deg < 1.0] = 1.0  # avoid division by zero for isolated nodes
+    W = A / deg  # normalized weights in float64
 
     rng = np.random.default_rng(seed)
     out = np.zeros((steps + 1, n), dtype=np.float32)
-    out[0] = x
+    out[0] = x.astype(np.float32)
     for t in range(1, steps + 1):
-        y = np.tanh(x)  # activation
-        drive = input_drive
+        y = np.tanh(x)  # activation in float64
+        drive: np.ndarray | float = float(input_drive)
         if noise_std > 0.0:
-            drive = drive + rng.normal(0.0, noise_std, size=n).astype(np.float32)
-        dx = (-leak * x + W @ y + drive).astype(np.float32)
-        x = (x + dt * dx).astype(np.float32)
-        out[t] = x
+            drive = drive + rng.normal(0.0, float(noise_std), size=n).astype(np.float64)
+        dx = -float(leak) * x + (W @ y) + drive
+        x = x + float(dt) * dx
+        out[t] = x.astype(np.float32)
     return out
 
 

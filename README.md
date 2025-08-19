@@ -16,6 +16,24 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
+## Dependencies
+
+Core (installed via requirements.txt):
+- numpy, pandas, click, Pillow, imageio, imageio-ffmpeg, pytest
+
+Optional (installed via requirements.txt to enable full functionality):
+- SciPy: interpolation in `phi.cosmos`, `phi.multiverse`, `phi.omniverse` (ndimage.zoom), KD‑tree in `phi.three` (cKDTree). Fallbacks exist if missing.
+- scikit-learn: optional NN backend in `phi.three` for metrics. Falls back if missing.
+- Matplotlib: previews/plots in cosmos/multiverse/omniverse and 3D plotting in three. Some helpers require it and raise clear errors if absent.
+- TensorFlow / tensorflow-macos: only for Keras export in `phi.ai.export_keras()` and `fractal ai engine --export-keras`. Not used otherwise.
+- h5py: required when exporting Keras to `.h5`. Newer TF also supports `.keras` format.
+- qiskit-terra: only to convert to a Qiskit circuit in `phi.quantum`. QASM export does not require it.
+- pydub (+ ffmpeg): for reading non‑16‑bit WAV in `phi.audio`. 16‑bit PCM WAV works without it.
+
+Platform notes:
+- macOS Apple Silicon uses `tensorflow-macos`.
+- Python 3.13: TensorFlow wheels may be unavailable; Keras export will be skipped unless a compatible TF is installed.
+
 2) See φ:
 
 ```bash
@@ -310,7 +328,7 @@ Notes:
 - Larger `--spatial-ratio`/`--layer-ratio` increase compression with more loss.
 - `--compare` saves a side-by-side mosaic; `--analyze` or `--analyze-output` writes MSE/RMSE/PSNR and spectral metrics.
 
-CLI note: For engine subcommands in `fractal ai`, `fractal cosmos`, and `fractal multiverse`, `--analyze` is an alias for `--analyze-output`.
+CLI note: For all fractal engine subcommands (`ai`, `cosmos`, `multiverse`, `omniverse`, `image`, `video`, `audio`, `three`, `quantum`), `--analyze` is an alias for `--analyze-output`.
 
 ## AI model compression (ratio)
 

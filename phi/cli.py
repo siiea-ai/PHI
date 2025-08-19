@@ -80,7 +80,7 @@ def fractal_ai() -> None:
 @click.option("--act-hidden", type=str, default="relu", show_default=True, help="Activation for hidden layers")
 @click.option("--act-output", type=str, default="sigmoid", show_default=True, help="Activation for output layer")
 @click.option("--seed", type=int, default=None, help="Random seed (optional)")
-@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.h5)")
+@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.h5 or .keras)")
 def ai_generate(output_path: str, input_dim: int, output_dim: int, depth: int, base_width: int, mode: str, act_hidden: str, act_output: str, seed: Optional[int], export_keras: Optional[str]) -> None:
     """Generate a full AI model bundle (JSON)."""
     try:
@@ -130,7 +130,7 @@ def ai_compress(input_path: str, model_path: str, ratio: int, method: str) -> No
 @click.option("--hidden", type=str, default=None, help="Comma-separated target hidden widths (e.g., 64,32,16)")
 @click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default=None, help="Override expansion method recorded in model")
 @click.option("--seed", type=int, default=None, help="Random seed for stochastic expansion (optional)")
-@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.h5)")
+@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.h5 or .keras)")
 def ai_expand(model_path: str, output_path: str, hidden: Optional[str], method: Optional[str], seed: Optional[int], export_keras: Optional[str]) -> None:
     """Expand a compressed AI model bundle back to a full model bundle."""
     try:
@@ -160,7 +160,7 @@ def ai_expand(model_path: str, output_path: str, hidden: Optional[str], method: 
 @click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth hidden neuron")
 @click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
 @click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (per-layer MSE and totals)")
-@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export reconstructed Keras model (.h5)")
+@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export reconstructed Keras model (.h5 or .keras)")
 def ai_engine(input_path: str, recon_output: str, model_path: Optional[str], ratio: int, method: str, analyze_output: Optional[str], export_keras: Optional[str]) -> None:
     """Compress + expand an AI model; optionally save compressed model, metrics, and Keras export."""
     try:
@@ -548,6 +548,140 @@ def multiverse_preview(model_path: str, image_path: str, cmap: str) -> None:
         from . import multiverse as mmod  # lazy import
         bundle = mmod.load_model(model_path)
         mmod.save_mosaic_from_model(bundle, image_path, cmap=cmap)
+        click.echo(f"Wrote mosaic: {image_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_cmd.group("omniverse")
+def fractal_omniverse() -> None:
+    """Omniverse grid compression/expansion (ratio strategy)."""
+
+
+@fractal_omniverse.command("generate")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output JSON model path (full omniverse grid)")
+@click.option("--width", type=int, required=True, help="Field width")
+@click.option("--height", type=int, required=True, help="Field height")
+@click.option("--layers", type=int, required=True, help="Number of layers per universe")
+@click.option("--universes", type=int, required=True, help="Number of universes")
+@click.option("--octaves", type=int, default=4, show_default=True, help="fBm octaves per layer")
+@click.option("--seed", type=int, default=None, help="Random seed (optional)")
+@click.option("--preview", "preview_path", type=click.Path(dir_okay=False), default=None, help="Optional mosaic PNG path")
+def omniverse_generate(output_path: str, width: int, height: int, layers: int, universes: int, octaves: int, seed: Optional[int], preview_path: Optional[str]) -> None:
+    """Generate a full omniverse grid bundle (JSON)."""
+    try:
+        from . import omniverse as omod  # lazy import
+        bundle = omod.generate_full_grid(width=width, height=height, layers=layers, universes=universes, octaves=octaves, seed=seed)
+        omod.save_model(bundle, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if preview_path:
+            omod.save_mosaic_from_model(bundle, preview_path)
+            click.echo(f"Wrote mosaic: {preview_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_omniverse.command("compress")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full omniverse JSON path")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), required=True, help="Output compressed JSON model path")
+@click.option("--spatial-ratio", type=int, default=2, show_default=True, help="Downsample every Nth pixel per axis")
+@click.option("--layer-ratio", type=int, default=1, show_default=True, help="Keep every Nth layer (1=keep all)")
+@click.option("--universe-ratio", type=int, default=1, show_default=True, help="Keep every Nth universe (1=keep all)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method to record in model")
+def omniverse_compress(input_path: str, model_path: str, spatial_ratio: int, layer_ratio: int, universe_ratio: int, method: str) -> None:
+    """Compress a full omniverse grid into a ratio model (educational)."""
+    try:
+        from . import omniverse as omod  # lazy import
+        full = omod.load_model(input_path)
+        cfg = omod.OmniverseConfig(strategy="ratio", spatial_ratio=spatial_ratio, layer_ratio=layer_ratio, universe_ratio=universe_ratio, method=method.lower())
+        bundle = omod.compress_grid(full, cfg)
+        omod.save_model(bundle, model_path)
+        click.echo(f"Wrote model: {model_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_omniverse.command("expand")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input compressed JSON model path (or full)")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output full omniverse JSON path")
+@click.option("--width", type=int, default=None, help="Target width (optional; must specify width, height, layers, universes together)")
+@click.option("--height", type=int, default=None, help="Target height (optional; must specify width, height, layers, universes together)")
+@click.option("--layers", type=int, default=None, help="Target layers (optional; must specify width, height, layers, universes together)")
+@click.option("--universes", type=int, default=None, help="Target universes (optional; must specify width, height, layers, universes together)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default=None, help="Override expansion method recorded in model")
+@click.option("--preview", "preview_path", type=click.Path(dir_okay=False), default=None, help="Optional mosaic PNG path")
+def omniverse_expand(model_path: str, output_path: str, width: Optional[int], height: Optional[int], layers: Optional[int], universes: Optional[int], method: Optional[str], preview_path: Optional[str]) -> None:
+    """Expand a compressed omniverse bundle back to a full bundle."""
+    try:
+        from . import omniverse as omod  # lazy import
+        bundle = omod.load_model(model_path)
+        dims = (width, height, layers, universes)
+        if any(v is not None for v in dims) and not all(v is not None for v in dims):
+            raise click.UsageError("Specify all of --width, --height, --layers, and --universes together, or none")
+        target_size = (int(width), int(height), int(layers), int(universes)) if all(v is not None for v in dims) else None
+        full = omod.expand_grid(bundle, target_size=target_size, method=(method.lower() if method else None))
+        omod.save_model(full, output_path)
+        click.echo(f"Wrote model: {output_path}")
+        if preview_path:
+            omod.save_mosaic_from_model(full, preview_path)
+            click.echo(f"Wrote mosaic: {preview_path}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_omniverse.command("engine")
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full omniverse JSON path")
+@click.option("--recon-output", "recon_output", type=click.Path(dir_okay=False), required=True, help="Output full omniverse JSON path (reconstructed)")
+@click.option("--model", "model_path", type=click.Path(dir_okay=False), default=None, help="Optional path to save compressed model JSON")
+@click.option("--spatial-ratio", type=int, default=2, show_default=True, help="Downsample every Nth pixel per axis")
+@click.option("--layer-ratio", type=int, default=1, show_default=True, help="Keep every Nth layer (1=keep all)")
+@click.option("--universe-ratio", type=int, default=1, show_default=True, help="Keep every Nth universe (1=keep all)")
+@click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
+@click.option("--compare", "compare_path", type=click.Path(dir_okay=False), default=None, help="Optional side-by-side mosaic compare image path")
+@click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (MSE/RMSE/PSNR + spectral)")
+def omniverse_engine(input_path: str, recon_output: str, model_path: Optional[str], spatial_ratio: int, layer_ratio: int, universe_ratio: int, method: str, compare_path: Optional[str], analyze_output: Optional[str]) -> None:
+    """Compress + expand an omniverse; optionally save compressed model, metrics, and compare mosaic."""
+    try:
+        from . import omniverse as omod  # lazy import
+        full_in = omod.load_model(input_path)
+        cfg = omod.OmniverseConfig(strategy="ratio", spatial_ratio=spatial_ratio, layer_ratio=layer_ratio, universe_ratio=universe_ratio, method=method.lower())
+        comp = omod.compress_grid(full_in, cfg)
+        if model_path:
+            omod.save_model(comp, model_path)
+            click.echo(f"Wrote model: {model_path}")
+        ow = int(full_in.get("width", 0))
+        oh = int(full_in.get("height", 0))
+        oL = int(full_in.get("layers", 0))
+        oU = int(full_in.get("universes", 0))
+        full_out = omod.expand_grid(comp, target_size=(ow, oh, oL, oU), method=method.lower())
+        omod.save_model(full_out, recon_output)
+        click.echo(f"Wrote model: {recon_output}")
+        if compare_path:
+            omod.save_compare_mosaic(full_in, full_out, compare_path)
+            click.echo(f"Wrote compare: {compare_path}")
+        if analyze_output:
+            mdf = omod.metrics_from_paths(input_path, recon_output)
+            mdf.to_csv(analyze_output, index=False)
+            click.echo(f"Wrote analysis: {analyze_output}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@fractal_omniverse.command("preview")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input omniverse JSON path (full or compressed)")
+@click.option("--output", "image_path", type=click.Path(dir_okay=False), required=True, help="Output mosaic PNG path")
+@click.option("--cmap", type=str, default="viridis", show_default=True, help="Matplotlib colormap name")
+def omniverse_preview(model_path: str, image_path: str, cmap: str) -> None:
+    """Export a mosaic image from an omniverse model (full or compressed)."""
+    try:
+        from . import omniverse as omod  # lazy import
+        bundle = omod.load_model(model_path)
+        omod.save_mosaic_from_model(bundle, image_path, cmap=cmap)
         click.echo(f"Wrote mosaic: {image_path}")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

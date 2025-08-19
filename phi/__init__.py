@@ -21,4 +21,5 @@ __all__ = [
     "quantum",
     "cosmos",
     "multiverse",
+    "omniverse",
 ]

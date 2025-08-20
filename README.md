@@ -52,6 +52,23 @@ Platform notes:
 - macOS Apple Silicon uses `tensorflow-macos`.
 - Python 3.13: TensorFlow wheels may be unavailable; Keras export will be skipped unless a compatible TF is installed.
 
+## Streamlit Dashboard
+
+Run a full-featured web UI for PHI, including Neuro BCI tools and a CLI explorer.
+
+```bash
+# from repo root, after installing requirements
+streamlit run dashboard/streamlit_app.py
+```
+
+Pages provided under `dashboard/pages/`:
+- Neuro BCI: Sim, Sweep, Eval, Train (calls `phi.neuro.bci` and dataset utilities directly)
+- CLI Explorer: run any `python -m phi.cli ...` command from the browser
+
+Outputs are saved under `out/` by default, mirroring CLI conventions.
+
+Tip: If running headless/remote, set `STREAMLIT_BROWSER_GATHER_USAGE_STATS=false`.
+
 ## Documentation
 
 - Quickstart: `docs/Quickstart.md`

@@ -30,6 +30,27 @@ Provided by `phi/neuro/bci.py` with CLI in `phi/cli.py neuro bci-sim`.
   - Cosine with φ restarts (period grows by φ)
 - Logs: timeseries CSV and summary JSON when `--out-dir` is given.
 
+## Experimental Design Notes (BCI)
+- Independent variables (manipulations):
+  - Scheduler type ∈ {constant, cosine, cosine_phi}
+  - Base gain `base_gain`, controller effect `ctrl_effect`, learning rate `base_lr`
+  - Drift `drift`, noise scale `snr_scale`, window `window_sec`, sampling `fs`
+- Dependent measures (per run):
+  - Control: MSE, MAE, time-to-convergence (TTC) from `phi.neuro.bci.simulate()`
+  - Spectral: PSD slope k from `phi.signals.psd_slope()` (1/f^k)
+  - Cross-scale coupling: PAC MI from `phi.signals.pac_tort_mi()`
+  - Complexity: LZC, sample entropy, multiscale entropy from `phi.signals`
+- Hypotheses linkage:
+  - H1: φ-aligned control maintains PSD slopes within k∈[0.5,2] more stably under drift.
+  - H2: `cosine_phi` increases PAC MI and reduces TTC vs `constant`/`cosine` at matched average gain.
+  - H3: Complexity metrics peak at intermediate scales when control stabilizes integration (φ schedules outperform baselines).
+- Protocol:
+  - Fix seeds per condition; run N≥10 seeds; log JSON summary + CSV per run; aggregate to CSV.
+  - Compare means ± 95% CI; paired comparisons across schedulers under identical seeds.
+- Repro commands:
+  - Single run: `python -m phi.cli neuro bci-sim --steps 500 --scheduler cosine_phi --out-dir out/bci_phi`
+  - Sweep: `python experiments/phi_coupling.py --steps 1000 --seeds 42,43,44 --schedulers constant,cosine,cosine_phi --out-csv out/bci_compare.csv --save-logs`
+
 ## Experiments
 - E1 (Scheduler efficacy): Compare constant vs cosine vs φ-restarts on identical seeds.
   - Script: `experiments/phi_coupling.py`

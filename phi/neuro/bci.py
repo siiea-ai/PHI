@@ -13,11 +13,12 @@ This module is designed for reproducible experiments and integrates with phi.sig
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple
 
 import math
 import os
+import json
 
 import numpy as np
 
@@ -178,7 +179,14 @@ class Controller:
 
 # --------------------------------- Runner -------------------------------- #
 
-def simulate(cfg: BCIConfig, scheduler: Scheduler, out_dir: Optional[str] = None) -> Dict[str, np.ndarray]:
+def simulate(
+    cfg: BCIConfig,
+    scheduler: Scheduler,
+    out_dir: Optional[str] = None,
+    save_features: bool = False,
+    save_windows: bool = False,
+    save_config: bool = True,
+) -> Dict[str, np.ndarray]:
     """Run a closed-loop simulation and return logs.
 
     Returns dict with keys: 'y', 'y_hat', 'err', 'sched', and summary metrics.
@@ -195,15 +203,28 @@ def simulate(cfg: BCIConfig, scheduler: Scheduler, out_dir: Optional[str] = None
 
     T = int(cfg.steps)
     y = np.zeros(T)
+    y_true = np.zeros(T)  # latent used as target at each step
     y_hat = np.zeros(T)
     err = np.zeros(T)
     sched_vals = np.zeros(T)
+
+    # Optional buffers for dataset creation
+    feat_dim = feats0.size
+    F = np.zeros((T, feat_dim)) if save_features else None
+    Xw = np.zeros((T, x0.size)) if save_windows else None
 
     # include first step's features in loop properly
     x_buf = x0
 
     for t in range(T):
+        # record current latent as supervised target (before stepping env)
+        y_true[t] = env.y
+
         feats, _ = feature_vector(x_buf, cfg.fs)
+        if F is not None:
+            F[t, :] = feats
+        if Xw is not None:
+            Xw[t, :] = x_buf
         pred = dec.predict(feats)
         u, s_val = ctrl.control(pred, t)
         e = dec.update(feats, target=env.y, lr_scale=s_val)
@@ -225,6 +246,7 @@ def simulate(cfg: BCIConfig, scheduler: Scheduler, out_dir: Optional[str] = None
 
     logs: Dict[str, np.ndarray] = {
         "y": y,
+        "y_true": y_true,
         "y_hat": y_hat,
         "err": err,
         "sched": sched_vals,
@@ -244,15 +266,47 @@ def simulate(cfg: BCIConfig, scheduler: Scheduler, out_dir: Optional[str] = None
         df = pd.DataFrame({
             "t": np.arange(T),
             "y": y,
+            "y_true": y_true,
             "y_hat": y_hat,
             "err": err,
             "sched": sched_vals,
         })
         df.to_csv(os.path.join(out_dir, "bci_timeseries.csv"), index=False)
         with open(os.path.join(out_dir, "bci_summary.json"), "w", encoding="utf-8") as f:
-            import json
-
             json.dump(logs_summary, f, indent=2)
+
+        # Optional: save features per-step
+        if F is not None:
+            fdf = pd.DataFrame(F, columns=names)
+            fdf.insert(0, "t", np.arange(T))
+            fdf["y_true"] = y_true
+            fdf["y_hat"] = y_hat
+            fdf["err"] = err
+            fdf["sched"] = sched_vals
+            fdf.to_csv(os.path.join(out_dir, "bci_features.csv"), index=False)
+
+        # Optional: save raw windows
+        if Xw is not None:
+            np.savez(os.path.join(out_dir, "bci_windows.npz"), X=Xw, fs=cfg.fs, window_sec=cfg.window_sec)
+
+        # Optional: save config and scheduler info for loaders
+        if save_config:
+            sch_info: Dict[str, Dict[str, float]]
+            if isinstance(scheduler, ConstantScheduler):
+                sch_info = {"type": "constant", "params": {"v": float(scheduler.v)}}
+            elif isinstance(scheduler, CosineScheduler):
+                sch_info = {"type": "cosine", "params": {"period": int(scheduler.period), "min_v": float(scheduler.min_v), "max_v": float(scheduler.max_v)}}
+            elif isinstance(scheduler, CosineWithPhiRestarts):
+                sch_info = {"type": "cosine_phi", "params": {"T0": int(scheduler.T0), "phi": float(scheduler.phi), "min_v": float(scheduler.min_v), "max_v": float(scheduler.max_v)}}
+            else:
+                sch_info = {"type": scheduler.__class__.__name__, "params": {}}
+
+            cfg_dict = asdict(cfg)
+            cfg_dict["feature_names"] = names
+            cfg_dict["window_size"] = int(x0.size)
+            cfg_dict["scheduler"] = sch_info
+            with open(os.path.join(out_dir, "bci_config.json"), "w", encoding="utf-8") as f:
+                json.dump(cfg_dict, f, indent=2)
 
     # Attach summary
     logs.update({k: np.asarray([v]) for k, v in logs_summary.items()})

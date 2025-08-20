@@ -47,6 +47,33 @@ deactivate
   --op golden_scale --mode multiply
 ```
 
+### 3a) BCI simulation (closed-loop)
+```bash
+.venv/bin/python -m phi.cli neuro bci-sim \
+  --steps 120 --fs 128 --window-sec 0.5 \
+  --scheduler cosine_phi \
+  --out-dir out/bci_demo
+# Prints JSON summary and writes logs to out/bci_demo
+```
+
+### 3b) Fractal neuro mini pipeline
+```bash
+OUT=out/neuro_quick
+mkdir -p "$OUT"
+.venv/bin/python -m phi.cli fractal neuro generate \
+  --output "$OUT/full.json" --nodes 24 --model ws --ws-k 4 --ws-p 0.1 \
+  --seed 5 --state-init random
+.venv/bin/python -m phi.cli fractal neuro compress \
+  --input "$OUT/full.json" --model "$OUT/model.json" --ratio 3 --method interp
+.venv/bin/python -m phi.cli fractal neuro expand \
+  --model "$OUT/model.json" --output "$OUT/recon.json" --nodes 24 --method interp --seed 7
+.venv/bin/python -m phi.cli fractal neuro simulate \
+  --model "$OUT/recon.json" --output "$OUT/traj.csv" \
+  --steps 10 --dt 0.1 --leak 0.1 --input-drive 0.05 --noise-std 0.0 --seed 42
+.venv/bin/python -m phi.cli fractal neuro analyze \
+  --a "$OUT/full.json" --b "$OUT/recon.json" --output "$OUT/metrics.csv"
+```
+
 ## 4) Run tests
 ```bash
 # neuro-only first

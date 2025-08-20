@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path as _Path
 
 # Load the sibling file 'phi/neuro.py' as a separate module name to avoid package collision
@@ -10,6 +11,8 @@ try:
     spec = importlib.util.spec_from_file_location("phi._neuro_impl", str(_impl_path))
     _mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     assert spec is not None and spec.loader is not None
+    # Ensure the module is visible for any relative imports executed during load
+    sys.modules[spec.name] = _mod  # type: ignore[index]
     spec.loader.exec_module(_mod)  # type: ignore[attr-defined]
     _impl = _mod
 except Exception as e:  # defer error to attribute access
@@ -27,6 +30,7 @@ from .bci import (  # noqa: E402
     Controller,
     simulate,
 )
+from .datasets import load_bci_dataset  # noqa: E402
 
 # Names to forward from the implementation module file
 __forward_names__ = [
@@ -63,4 +67,5 @@ __all__ = __forward_names__ + [
     "OnlineLinearDecoder",
     "Controller",
     "simulate",
+    "load_bci_dataset",
 ]

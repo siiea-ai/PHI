@@ -2122,8 +2122,11 @@ def neuro_cmd() -> None:
 @click.option("--phi", "phi_val", type=float, default=1.618, show_default=True, help="Golden ratio factor for period growth")
 @click.option("--phi-min", type=float, default=0.2, show_default=True, help="Min value for φ-restarts scheduler")
 @click.option("--phi-max", type=float, default=1.0, show_default=True, help="Max value for φ-restarts scheduler")
+@click.option("--save-features/--no-save-features", default=False, show_default=True, help="Save per-step feature vectors to 'bci_features.csv'")
+@click.option("--save-windows/--no-save-windows", default=False, show_default=True, help="Save raw signal windows to 'bci_windows.npz'")
+@click.option("--save-config/--no-save-config", default=True, show_default=True, help="Write 'bci_config.json' with metadata and feature names")
 @click.option("--out-dir", type=click.Path(dir_okay=True, file_okay=False), default=None, help="Optional output directory to save logs")
-def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_noise: float, drift: float, ctrl_effect: float, base_lr: float, base_gain: float, scheduler: str, const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, out_dir: Optional[str]) -> None:
+def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_noise: float, drift: float, ctrl_effect: float, base_lr: float, base_gain: float, scheduler: str, const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, save_features: bool, save_windows: bool, save_config: bool, out_dir: Optional[str]) -> None:
     """Run a closed-loop BCI simulation and print summary metrics."""
     try:
         from .neuro import bci as bci_mod
@@ -2153,10 +2156,330 @@ def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_n
         base_gain=float(base_gain),
     )
 
-    logs = bci_mod.simulate(cfg, scheduler=sch, out_dir=out_dir)
+    logs = bci_mod.simulate(
+        cfg,
+        scheduler=sch,
+        out_dir=out_dir,
+        save_features=bool(save_features),
+        save_windows=bool(save_windows),
+        save_config=bool(save_config),
+    )
     summary = {k: float(v[0]) for k, v in logs.items() if k in ("mse", "mae", "ttc")}
-    click.echo(json.dumps({"summary": summary, "out_dir": out_dir}, indent=2))
+    out = {"summary": summary, "out_dir": out_dir}
+    # If out_dir provided, include which artifacts likely exist
+    if out_dir:
+        out["artifacts"] = {
+            "timeseries_csv": "bci_timeseries.csv",
+            "features_csv": "bci_features.csv" if save_features else None,
+            "windows_npz": "bci_windows.npz" if save_windows else None,
+            "config_json": "bci_config.json" if save_config else None,
+            "summary_json": "bci_summary.json",
+        }
+    click.echo(json.dumps(out, indent=2))
 
 
+@neuro_cmd.command("bci-sweep")
+@click.option("--steps", type=int, default=300, show_default=True)
+@click.option("--fs", type=float, default=256.0, show_default=True)
+@click.option("--window-sec", type=float, default=1.0, show_default=True)
+@click.option("--seeds", type=int, multiple=True, default=[1, 2], show_default=True)
+@click.option("--process-noise", type=float, multiple=True, default=[0.02], show_default=True)
+@click.option("--drift", type=float, multiple=True, default=[0.001], show_default=True)
+@click.option("--snr-scale", type=float, multiple=True, default=[0.6], show_default=True)
+@click.option("--noise-std", type=float, multiple=True, default=[1.0], show_default=True)
+@click.option("--base-lr", type=float, default=0.05, show_default=True)
+@click.option("--base-gain", type=float, default=0.5, show_default=True)
+@click.option("--schedulers", type=click.Choice(["constant", "cosine", "cosine_phi"], case_sensitive=False), multiple=True, default=["cosine_phi"], show_default=True)
+@click.option("--const-v", type=float, default=1.0, show_default=True)
+@click.option("--cos-period", type=int, default=200, show_default=True)
+@click.option("--cos-min", type=float, default=0.2, show_default=True)
+@click.option("--cos-max", type=float, default=1.0, show_default=True)
+@click.option("--phi-T0", "phi_T0", type=int, default=200, show_default=True)
+@click.option("--phi", "phi_val", type=float, default=1.618, show_default=True)
+@click.option("--phi-min", type=float, default=0.2, show_default=True)
+@click.option("--phi-max", type=float, default=1.0, show_default=True)
+@click.option("--save-features/--no-save-features", default=True, show_default=True)
+@click.option("--save-windows/--no-save-windows", default=False, show_default=True)
+@click.option("--save-config/--no-save-config", default=True, show_default=True)
+@click.option("--out-root", type=click.Path(dir_okay=True, file_okay=False), required=True, help="Root directory to write runs and manifest.csv")
+def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, ...], process_noise: Tuple[float, ...], drift: Tuple[float, ...], snr_scale: Tuple[float, ...], noise_std: Tuple[float, ...], base_lr: float, base_gain: float, schedulers: Tuple[str, ...], const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, save_features: bool, save_windows: bool, save_config: bool, out_root: str) -> None:
+    """Run a grid of BCI simulations and write a manifest of results."""
+    try:
+        import pandas as pd
+        from itertools import product
+        from .neuro import bci as bci_mod
+    except Exception as e:
+        click.echo(f"Error importing deps: {e}", err=True)
+        sys.exit(1)
+
+    os.makedirs(out_root, exist_ok=True)
+    rows = []
+    run_idx = 0
+
+    # Build scheduler factory
+    def make_scheduler(name: str):
+        n = name.lower()
+        if n == "constant":
+            return bci_mod.ConstantScheduler(v=float(const_v))
+        if n == "cosine":
+            return bci_mod.CosineScheduler(period=int(cos_period), min_v=float(cos_min), max_v=float(cos_max))
+        return bci_mod.CosineWithPhiRestarts(T0=int(phi_T0), phi=float(phi_val), min_v=float(phi_min), max_v=float(phi_max))
+
+    for seed, pn, dr, snr, ns, sch_name in product(seeds, process_noise, drift, snr_scale, noise_std, schedulers):
+        run_idx += 1
+        run_dir = os.path.join(out_root, f"run_{run_idx:04d}")
+        os.makedirs(run_dir, exist_ok=True)
+
+        cfg = bci_mod.BCIConfig(
+            fs=float(fs), window_sec=float(window_sec), steps=int(steps), seed=int(seed),
+            process_noise=float(pn), drift=float(dr), ctrl_effect=0.05, base_lr=float(base_lr), base_gain=float(base_gain),
+            noise_std=float(ns), snr_scale=float(snr),
+        )
+        sch = make_scheduler(sch_name)
+
+        logs = bci_mod.simulate(
+            cfg, scheduler=sch, out_dir=run_dir,
+            save_features=bool(save_features), save_windows=bool(save_windows), save_config=bool(save_config),
+        )
+        summary = {k: float(v[0]) for k, v in logs.items() if k in ("mse", "mae", "ttc")}
+        row = {
+            "run": run_idx,
+            "run_dir": run_dir,
+            "seed": seed,
+            "process_noise": pn,
+            "drift": dr,
+            "snr_scale": snr,
+            "noise_std": ns,
+            "scheduler": sch_name,
+            **summary,
+        }
+        rows.append(row)
+
+    manifest_path = os.path.join(out_root, "manifest.csv")
+    pd.DataFrame(rows).to_csv(manifest_path, index=False)
+    click.echo(json.dumps({"runs": len(rows), "manifest": manifest_path, "out_root": out_root}, indent=2))
+
+
+@neuro_cmd.command("bci-train")
+@click.option("--data-dir", type=click.Path(exists=True, file_okay=False), required=True, help="Directory with bci_* artifacts from bci-sim")
+@click.option("--mode", type=click.Choice(["features", "windows"], case_sensitive=False), default="features", show_default=True)
+@click.option("--model", type=click.Choice(["ridge", "lasso", "linear"], case_sensitive=False), default="ridge", show_default=True)
+@click.option("--alpha", type=float, default=1.0, show_default=True, help="Regularization strength for ridge/lasso")
+@click.option("--test-size", type=float, default=0.2, show_default=True)
+@click.option("--random-state", type=int, default=0, show_default=True)
+@click.option("--save-preds/--no-save-preds", default=True, show_default=True)
+def neuro_bci_train(data_dir: str, mode: str, model: str, alpha: float, test_size: float, random_state: int, save_preds: bool) -> None:
+    """Train a simple regression baseline on one BCI run directory and report metrics."""
+    try:
+        import pandas as pd
+        import numpy as np
+        from sklearn.model_selection import train_test_split
+        from sklearn.linear_model import Ridge, Lasso, LinearRegression
+        from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+        from .neuro import load_bci_dataset as load_ds
+    except Exception as e:
+        click.echo(f"Error importing deps: {e}", err=True)
+        sys.exit(1)
+
+    use_features = mode.lower() == "features"
+    use_windows = mode.lower() == "windows"
+    ds = load_ds(data_dir, use_features=use_features, use_windows=use_windows)
+    X = ds["X_feat"] if use_features else ds["X_win"]
+    y = ds["y"]
+    if X is None:
+        click.echo("Error: selected mode has no available X in data_dir", err=True)
+        sys.exit(2)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=float(test_size), random_state=int(random_state), shuffle=False
+    )
+
+    if model.lower() == "ridge":
+        clf = Ridge(alpha=float(alpha))
+    elif model.lower() == "lasso":
+        clf = Lasso(alpha=float(alpha))
+    else:
+        clf = LinearRegression()
+
+    clf.fit(X_train, y_train)
+    y_pred_train = clf.predict(X_train)
+    y_pred_test = clf.predict(X_test)
+
+    metrics = {
+        "mse_train": float(mean_squared_error(y_train, y_pred_train)),
+        "mae_train": float(mean_absolute_error(y_train, y_pred_train)),
+        "r2_train": float(r2_score(y_train, y_pred_train)),
+        "mse_test": float(mean_squared_error(y_test, y_pred_test)),
+        "mae_test": float(mean_absolute_error(y_test, y_pred_test)),
+        "r2_test": float(r2_score(y_test, y_pred_test)),
+        "n_train": int(len(y_train)),
+        "n_test": int(len(y_test)),
+        "mode": mode.lower(),
+        "model": model.lower(),
+        "alpha": float(alpha),
+    }
+
+    # Save metrics
+    metrics_path = os.path.join(data_dir, "train_metrics.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+
+    # Optional predictions
+    preds_path = None
+    if save_preds:
+        ts_path = os.path.join(data_dir, "bci_timeseries.csv")
+        t = None
+        if os.path.exists(ts_path):
+            t = pd.read_csv(ts_path)["t"].to_numpy()
+        else:
+            t = np.arange(ds["meta"].get("T", X.shape[0]))
+
+        # Map splits back to the full index if needed; here we just save two blocks
+        dfp = pd.DataFrame({
+            "t": np.concatenate([t[:len(y_train)], t[len(y_train):len(y_train)+len(y_test)]]),
+            "split": ["train"] * len(y_train) + ["test"] * len(y_test),
+            "y_true": np.concatenate([y_train, y_test]),
+            "y_pred": np.concatenate([y_pred_train, y_pred_test]),
+        })
+        preds_path = os.path.join(data_dir, "train_predictions.csv")
+        dfp.to_csv(preds_path, index=False)
+
+    click.echo(json.dumps({"metrics": metrics, "metrics_path": metrics_path, "preds_path": preds_path}, indent=2))
+
+
+@neuro_cmd.command("bci-eval")
+@click.option("--manifest", type=click.Path(exists=True, dir_okay=False), required=True, help="Path to manifest.csv from bci-sweep")
+@click.option("--compute-signal-metrics/--no-compute-signal-metrics", default=True, show_default=True)
+@click.option("--save-plots/--no-save-plots", default=False, show_default=True)
+@click.option("--out-path", type=click.Path(dir_okay=False), default=None, help="Optional path to save group summary CSV (default: manifest_dir/summary.csv)")
+def neuro_bci_eval(manifest: str, compute_signal_metrics: bool, save_plots: bool, out_path: Optional[str]) -> None:
+    """Aggregate sweep results, optionally compute signal metrics, and summarize."""
+    try:
+        import pandas as pd
+        import numpy as np
+        from .signals import compute_metrics as sig_metrics
+    except Exception as e:
+        click.echo(f"Error importing deps: {e}", err=True)
+        sys.exit(1)
+
+    man_path = os.path.abspath(manifest)
+    man_dir = os.path.dirname(man_path)
+    df = pd.read_csv(man_path)
+
+    # Optionally enrich with signal metrics per run
+    enrich_cols = [
+        "psd_slope", "pac_tg_mi", "higuchi_fd", "lzc",
+        "bp_delta", "bp_theta", "bp_alpha", "bp_beta", "bp_gamma",
+    ]
+    if compute_signal_metrics:
+        new_vals = {c: [] for c in enrich_cols}
+        for _, row in df.iterrows():
+            run_dir = str(row["run_dir"]) if "run_dir" in row else None
+            if not run_dir or not os.path.isdir(run_dir):
+                for c in enrich_cols:
+                    new_vals[c].append(np.nan)
+                continue
+            cfg_path = os.path.join(run_dir, "bci_config.json")
+            npz_path = os.path.join(run_dir, "bci_windows.npz")
+            fs = None
+            try:
+                if os.path.exists(cfg_path):
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                        fs = float(cfg.get("fs", 256.0))
+                if os.path.exists(npz_path) and fs is not None:
+                    npz = np.load(npz_path)
+                    X = npz.get("X")
+                    if X is not None and X.size > 0:
+                        x_concat = np.asarray(X).reshape(-1).astype(float)
+                        sm = sig_metrics(x_concat, fs)
+                        new_vals["psd_slope"].append(float(sm.psd_slope))
+                        new_vals["pac_tg_mi"].append(float(sm.pac_tg_mi))
+                        new_vals["higuchi_fd"].append(float(sm.higuchi_fd))
+                        new_vals["lzc"].append(float(sm.lzc))
+                        for b in ("delta", "theta", "alpha", "beta", "gamma"):
+                            new_vals[f"bp_{b}"].append(float(sm.bandpowers.get(b, np.nan)))
+                        continue
+            except Exception:
+                pass
+            # Fallback if unavailable or on error
+            for c in enrich_cols:
+                new_vals[c].append(np.nan)
+
+        for c in enrich_cols:
+            df[c] = new_vals[c]
+
+        # Save enriched manifest next to original
+        man_enriched = os.path.join(man_dir, "manifest_enriched.csv")
+        df.to_csv(man_enriched, index=False)
+    else:
+        man_enriched = man_path
+
+    # Group summary
+    group_keys = [k for k in ["scheduler", "snr_scale", "drift", "process_noise", "noise_std"] if k in df.columns]
+    metrics_cols = [c for c in ["mse", "mae", "ttc", *enrich_cols] if c in df.columns]
+    if not metrics_cols:
+        click.echo("Error: no metrics columns found in manifest", err=True)
+        sys.exit(2)
+
+    def _agg_spec(cols):
+        spec = {}
+        for c in cols:
+            spec[c] = ["mean", "std", "count"] if c in ("mse", "mae", "ttc") else ["mean", "std"]
+        return spec
+
+    summary = df.groupby(group_keys, dropna=False).agg(_agg_spec(metrics_cols)) if group_keys else df.agg(_agg_spec(metrics_cols))
+    # Flatten columns
+    summary.columns = [f"{m}_{s}" for (m, s) in summary.columns]
+    summary = summary.reset_index()
+
+    # Write outputs
+    if out_path is None:
+        out_path = os.path.join(man_dir, "summary.csv")
+    summary.to_csv(out_path, index=False)
+
+    # Optional plots
+    plots = {}
+    if save_plots:
+        try:
+            import matplotlib
+            matplotlib.use("Agg")  # headless
+            import matplotlib.pyplot as plt
+            plots_dir = os.path.join(man_dir, "plots")
+            os.makedirs(plots_dir, exist_ok=True)
+
+            if "scheduler" in df.columns and "mse" in df.columns:
+                fig, ax = plt.subplots(figsize=(5, 3))
+                df.boxplot(column="mse", by="scheduler", ax=ax, grid=False)
+                ax.set_title("MSE by Scheduler")
+                ax.set_xlabel("Scheduler")
+                ax.set_ylabel("MSE")
+                plt.suptitle("")
+                p = os.path.join(plots_dir, "mse_by_scheduler.png")
+                fig.tight_layout()
+                fig.savefig(p, dpi=150)
+                plt.close(fig)
+                plots["mse_by_scheduler"] = p
+
+            if "snr_scale" in df.columns and "mse" in df.columns:
+                fig, ax = plt.subplots(figsize=(5, 3))
+                ax.scatter(df["snr_scale"], df["mse"], s=12, alpha=0.7)
+                ax.set_title("MSE vs SNR scale")
+                ax.set_xlabel("snr_scale")
+                ax.set_ylabel("MSE")
+                fig.tight_layout()
+                p = os.path.join(plots_dir, "mse_vs_snr.png")
+                fig.savefig(p, dpi=150)
+                plt.close(fig)
+                plots["mse_vs_snr"] = p
+        except Exception as e:
+            click.echo(f"Plotting error (ignored): {e}", err=True)
+
+    click.echo(json.dumps({
+        "manifest": man_path,
+        "manifest_enriched": man_enriched,
+        "summary_csv": out_path,
+        "plots": plots if plots else None,
+    }, indent=2))
 if __name__ == "__main__":
     main()

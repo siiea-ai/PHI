@@ -4,6 +4,7 @@ import sys
 import os
 from typing import Optional, Tuple
 import json
+import time
 
 import click
 
@@ -2110,10 +2111,14 @@ def neuro_cmd() -> None:
 @click.option("--seed", type=int, default=42, show_default=True, help="Random seed")
 @click.option("--process-noise", type=float, default=0.02, show_default=True, help="Latent process noise")
 @click.option("--drift", type=float, default=0.001, show_default=True, help="Latent slow drift magnitude")
+@click.option("--snr-scale", type=float, default=0.6, show_default=True, help="How strongly latent modulates the gamma envelope")
+@click.option("--noise-std", type=float, default=1.0, show_default=True, help="Observation noise standard deviation")
+@click.option("--theta-hz", type=float, default=6.0, show_default=True, help="Theta oscillation frequency (Hz)")
+@click.option("--gamma-hz", type=float, default=40.0, show_default=True, help="Gamma oscillation frequency (Hz)")
 @click.option("--ctrl-effect", type=float, default=0.05, show_default=True, help="Control influence on latent")
 @click.option("--base-lr", type=float, default=0.05, show_default=True, help="Decoder base learning rate")
 @click.option("--base-gain", type=float, default=0.5, show_default=True, help="Controller base gain")
-@click.option("--scheduler", type=click.Choice(["constant", "cosine", "cosine_phi"], case_sensitive=False), default="cosine_phi", show_default=True, help="Scheduler type")
+@click.option("--scheduler", type=click.Choice(["constant", "cosine", "cosine_phi", "linear", "step"], case_sensitive=False), default="cosine_phi", show_default=True, help="Scheduler type")
 @click.option("--const-v", type=float, default=1.0, show_default=True, help="Constant scheduler value (if scheduler=constant)")
 @click.option("--cos-period", type=int, default=200, show_default=True, help="Cosine period (steps)")
 @click.option("--cos-min", type=float, default=0.2, show_default=True, help="Cosine min value")
@@ -2122,11 +2127,17 @@ def neuro_cmd() -> None:
 @click.option("--phi", "phi_val", type=float, default=1.618, show_default=True, help="Golden ratio factor for period growth")
 @click.option("--phi-min", type=float, default=0.2, show_default=True, help="Min value for φ-restarts scheduler")
 @click.option("--phi-max", type=float, default=1.0, show_default=True, help="Max value for φ-restarts scheduler")
+@click.option("--lin-start", type=float, default=1.0, show_default=True, help="Linear start value (if scheduler=linear)")
+@click.option("--lin-end", type=float, default=0.2, show_default=True, help="Linear end value (if scheduler=linear)")
+@click.option("--lin-duration", type=int, default=500, show_default=True, help="Linear duration in steps (if scheduler=linear)")
+@click.option("--step-initial", type=float, default=1.0, show_default=True, help="Initial value (if scheduler=step)")
+@click.option("--step-gamma", type=float, default=0.5, show_default=True, help="Multiplicative decay factor per period (if scheduler=step)")
+@click.option("--step-period", type=int, default=200, show_default=True, help="Period in steps for step schedule (if scheduler=step)")
 @click.option("--save-features/--no-save-features", default=False, show_default=True, help="Save per-step feature vectors to 'bci_features.csv'")
 @click.option("--save-windows/--no-save-windows", default=False, show_default=True, help="Save raw signal windows to 'bci_windows.npz'")
 @click.option("--save-config/--no-save-config", default=True, show_default=True, help="Write 'bci_config.json' with metadata and feature names")
 @click.option("--out-dir", type=click.Path(dir_okay=True, file_okay=False), default=None, help="Optional output directory to save logs")
-def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_noise: float, drift: float, ctrl_effect: float, base_lr: float, base_gain: float, scheduler: str, const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, save_features: bool, save_windows: bool, save_config: bool, out_dir: Optional[str]) -> None:
+def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_noise: float, drift: float, snr_scale: float, noise_std: float, ctrl_effect: float, theta_hz: float, gamma_hz: float, base_lr: float, base_gain: float, scheduler: str, const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, lin_start: float, lin_end: float, lin_duration: int, step_initial: float, step_gamma: float, step_period: int, save_features: bool, save_windows: bool, save_config: bool, out_dir: Optional[str]) -> None:
     """Run a closed-loop BCI simulation and print summary metrics."""
     try:
         from .neuro import bci as bci_mod
@@ -2140,6 +2151,10 @@ def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_n
         sch = bci_mod.ConstantScheduler(v=float(const_v))
     elif sch_type == "cosine":
         sch = bci_mod.CosineScheduler(period=int(cos_period), min_v=float(cos_min), max_v=float(cos_max))
+    elif sch_type == "linear":
+        sch = bci_mod.LinearScheduler(start_v=float(lin_start), end_v=float(lin_end), duration=int(lin_duration))
+    elif sch_type == "step":
+        sch = bci_mod.StepScheduler(initial=float(step_initial), gamma=float(step_gamma), period=int(step_period))
     else:
         sch = bci_mod.CosineWithPhiRestarts(T0=int(phi_T0), phi=float(phi_val), min_v=float(phi_min), max_v=float(phi_max))
 
@@ -2154,6 +2169,10 @@ def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_n
         ctrl_effect=float(ctrl_effect),
         base_lr=float(base_lr),
         base_gain=float(base_gain),
+        noise_std=float(noise_std),
+        snr_scale=float(snr_scale),
+        theta_hz=float(theta_hz),
+        gamma_hz=float(gamma_hz),
     )
 
     logs = bci_mod.simulate(
@@ -2187,9 +2206,12 @@ def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_n
 @click.option("--drift", type=float, multiple=True, default=[0.001], show_default=True)
 @click.option("--snr-scale", type=float, multiple=True, default=[0.6], show_default=True)
 @click.option("--noise-std", type=float, multiple=True, default=[1.0], show_default=True)
+@click.option("--theta-hz", type=float, default=6.0, show_default=True)
+@click.option("--gamma-hz", type=float, default=40.0, show_default=True)
 @click.option("--base-lr", type=float, default=0.05, show_default=True)
 @click.option("--base-gain", type=float, default=0.5, show_default=True)
-@click.option("--schedulers", type=click.Choice(["constant", "cosine", "cosine_phi"], case_sensitive=False), multiple=True, default=["cosine_phi"], show_default=True)
+@click.option("--ctrl-effect", type=float, default=0.05, show_default=True)
+@click.option("--schedulers", type=click.Choice(["constant", "cosine", "cosine_phi", "linear", "step"], case_sensitive=False), multiple=True, default=["cosine_phi"], show_default=True)
 @click.option("--const-v", type=float, default=1.0, show_default=True)
 @click.option("--cos-period", type=int, default=200, show_default=True)
 @click.option("--cos-min", type=float, default=0.2, show_default=True)
@@ -2198,16 +2220,24 @@ def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_n
 @click.option("--phi", "phi_val", type=float, default=1.618, show_default=True)
 @click.option("--phi-min", type=float, default=0.2, show_default=True)
 @click.option("--phi-max", type=float, default=1.0, show_default=True)
+@click.option("--lin-start", type=float, default=1.0, show_default=True)
+@click.option("--lin-end", type=float, default=0.2, show_default=True)
+@click.option("--lin-duration", type=int, default=500, show_default=True)
+@click.option("--step-initial", type=float, default=1.0, show_default=True)
+@click.option("--step-gamma", type=float, default=0.5, show_default=True)
+@click.option("--step-period", type=int, default=200, show_default=True)
+@click.option("--max-run-sec", type=float, default=0.0, show_default=True, help="Max seconds per run; 0 disables timeout")
 @click.option("--save-features/--no-save-features", default=True, show_default=True)
 @click.option("--save-windows/--no-save-windows", default=False, show_default=True)
 @click.option("--save-config/--no-save-config", default=True, show_default=True)
 @click.option("--out-root", type=click.Path(dir_okay=True, file_okay=False), required=True, help="Root directory to write runs and manifest.csv")
-def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, ...], process_noise: Tuple[float, ...], drift: Tuple[float, ...], snr_scale: Tuple[float, ...], noise_std: Tuple[float, ...], base_lr: float, base_gain: float, schedulers: Tuple[str, ...], const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, save_features: bool, save_windows: bool, save_config: bool, out_root: str) -> None:
+def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, ...], process_noise: Tuple[float, ...], drift: Tuple[float, ...], snr_scale: Tuple[float, ...], noise_std: Tuple[float, ...], theta_hz: float, gamma_hz: float, base_lr: float, base_gain: float, ctrl_effect: float, schedulers: Tuple[str, ...], const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, lin_start: float, lin_end: float, lin_duration: int, step_initial: float, step_gamma: float, step_period: int, max_run_sec: float, save_features: bool, save_windows: bool, save_config: bool, out_root: str) -> None:
     """Run a grid of BCI simulations and write a manifest of results."""
     try:
         import pandas as pd
         from itertools import product
         from .neuro import bci as bci_mod
+        import numpy as np
     except Exception as e:
         click.echo(f"Error importing deps: {e}", err=True)
         sys.exit(1)
@@ -2223,6 +2253,10 @@ def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, 
             return bci_mod.ConstantScheduler(v=float(const_v))
         if n == "cosine":
             return bci_mod.CosineScheduler(period=int(cos_period), min_v=float(cos_min), max_v=float(cos_max))
+        if n == "linear":
+            return bci_mod.LinearScheduler(start_v=float(lin_start), end_v=float(lin_end), duration=int(lin_duration))
+        if n == "step":
+            return bci_mod.StepScheduler(initial=float(step_initial), gamma=float(step_gamma), period=int(step_period))
         return bci_mod.CosineWithPhiRestarts(T0=int(phi_T0), phi=float(phi_val), min_v=float(phi_min), max_v=float(phi_max))
 
     for seed, pn, dr, snr, ns, sch_name in product(seeds, process_noise, drift, snr_scale, noise_std, schedulers):
@@ -2232,28 +2266,68 @@ def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, 
 
         cfg = bci_mod.BCIConfig(
             fs=float(fs), window_sec=float(window_sec), steps=int(steps), seed=int(seed),
-            process_noise=float(pn), drift=float(dr), ctrl_effect=0.05, base_lr=float(base_lr), base_gain=float(base_gain),
-            noise_std=float(ns), snr_scale=float(snr),
+            process_noise=float(pn), drift=float(dr), ctrl_effect=float(ctrl_effect), base_lr=float(base_lr), base_gain=float(base_gain),
+            noise_std=float(ns), snr_scale=float(snr), theta_hz=float(theta_hz), gamma_hz=float(gamma_hz),
         )
         sch = make_scheduler(sch_name)
 
-        logs = bci_mod.simulate(
-            cfg, scheduler=sch, out_dir=run_dir,
-            save_features=bool(save_features), save_windows=bool(save_windows), save_config=bool(save_config),
+        # Cooperative timeout per run via on_step
+        run_start = time.time()
+        click.echo(
+            f"[bci-sweep] start run {run_idx}: seed={seed}, pn={pn}, dr={dr}, snr={snr}, ns={ns}, scheduler={sch_name}",
+            err=True,
         )
-        summary = {k: float(v[0]) for k, v in logs.items() if k in ("mse", "mae", "ttc")}
-        row = {
-            "run": run_idx,
-            "run_dir": run_dir,
-            "seed": seed,
-            "process_noise": pn,
-            "drift": dr,
-            "snr_scale": snr,
-            "noise_std": ns,
-            "scheduler": sch_name,
-            **summary,
-        }
-        rows.append(row)
+        def _on_step(t: int) -> None:
+            mrs = float(max_run_sec or 0.0)
+            if mrs > 0.0 and (time.time() - run_start) > mrs:
+                raise bci_mod.SimulationInterrupt("timeout")
+
+        try:
+            logs = bci_mod.simulate(
+                cfg, scheduler=sch, out_dir=run_dir,
+                save_features=bool(save_features), save_windows=bool(save_windows), save_config=bool(save_config),
+                on_step=_on_step,
+            )
+            summary = {k: float(v[0]) for k, v in logs.items() if k in ("mse", "mae", "ttc")}
+            row = {
+                "run": run_idx,
+                "run_dir": run_dir,
+                "seed": seed,
+                "process_noise": pn,
+                "drift": dr,
+                "snr_scale": snr,
+                "noise_std": ns,
+                "scheduler": sch_name,
+                **summary,
+                "status": "ok",
+            }
+            rows.append(row)
+            elapsed = time.time() - run_start
+            click.echo(
+                f"[bci-sweep] done run {run_idx} in {elapsed:.2f}s: {summary}",
+                err=True,
+            )
+        except bci_mod.SimulationInterrupt as si:
+            # Timeout: record row with NaN metrics and continue
+            summary = {"mse": np.nan, "mae": np.nan, "ttc": np.nan}
+            row = {
+                "run": run_idx,
+                "run_dir": run_dir,
+                "seed": seed,
+                "process_noise": pn,
+                "drift": dr,
+                "snr_scale": snr,
+                "noise_std": ns,
+                "scheduler": sch_name,
+                **summary,
+                "status": "timeout",
+            }
+            rows.append(row)
+            elapsed = time.time() - run_start
+            click.echo(
+                f"[bci-sweep] timeout run {run_idx} after {elapsed:.2f}s (limit={max_run_sec}s)",
+                err=True,
+            )
 
     manifest_path = os.path.join(out_root, "manifest.csv")
     pd.DataFrame(rows).to_csv(manifest_path, index=False)

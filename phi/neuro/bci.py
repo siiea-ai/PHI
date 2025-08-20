@@ -14,7 +14,7 @@ This module is designed for reproducible experiments and integrates with phi.sig
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Callable
 
 import math
 import os
@@ -70,6 +70,38 @@ class CosineWithPhiRestarts(Scheduler):
             self._t_end += self._period
         c = 0.5 * (1 + math.cos(2 * math.pi * ((t) % self._period) / max(1, self._period)))
         return float(self.min_v + (self.max_v - self.min_v) * c)
+
+
+@dataclass
+class LinearScheduler(Scheduler):
+    start_v: float = 1.0
+    end_v: float = 0.2
+    duration: int = 500
+
+    def value(self, t: int) -> float:
+        if self.duration <= 0:
+            return float(self.end_v)
+        # linear interpolate from start_v to end_v over [0, duration]
+        alpha = min(max(int(t), 0), int(self.duration)) / float(self.duration)
+        return float(self.start_v + (self.end_v - self.start_v) * alpha)
+
+
+@dataclass
+class StepScheduler(Scheduler):
+    initial: float = 1.0
+    gamma: float = 0.5
+    period: int = 200
+
+    def value(self, t: int) -> float:
+        p = max(1, int(self.period))
+        k = int(max(0, int(t)) // p)
+        return float(self.initial * (self.gamma ** k))
+
+
+# --- Cooperative interrupt for cancellation/timeouts ---
+class SimulationInterrupt(Exception):
+    """Raised by callers via on_step to cooperatively stop simulate()."""
+    pass
 
 
 # -------------------------------- Config -------------------------------- #
@@ -186,6 +218,7 @@ def simulate(
     save_features: bool = False,
     save_windows: bool = False,
     save_config: bool = True,
+    on_step: Optional[Callable[[int], None]] = None,
 ) -> Dict[str, np.ndarray]:
     """Run a closed-loop simulation and return logs.
 
@@ -217,6 +250,15 @@ def simulate(
     x_buf = x0
 
     for t in range(T):
+        # optional heartbeat to external caller
+        if on_step is not None:
+            try:
+                on_step(t)
+            except SimulationInterrupt:
+                # bubble up cooperative interrupts (cancel/timeout)
+                raise
+            except Exception:
+                pass
         # record current latent as supervised target (before stepping env)
         y_true[t] = env.y
 
@@ -298,6 +340,10 @@ def simulate(
                 sch_info = {"type": "cosine", "params": {"period": int(scheduler.period), "min_v": float(scheduler.min_v), "max_v": float(scheduler.max_v)}}
             elif isinstance(scheduler, CosineWithPhiRestarts):
                 sch_info = {"type": "cosine_phi", "params": {"T0": int(scheduler.T0), "phi": float(scheduler.phi), "min_v": float(scheduler.min_v), "max_v": float(scheduler.max_v)}}
+            elif isinstance(scheduler, LinearScheduler):
+                sch_info = {"type": "linear", "params": {"start_v": float(scheduler.start_v), "end_v": float(scheduler.end_v), "duration": int(scheduler.duration)}}
+            elif isinstance(scheduler, StepScheduler):
+                sch_info = {"type": "step", "params": {"initial": float(scheduler.initial), "gamma": float(scheduler.gamma), "period": int(scheduler.period)}}
             else:
                 sch_info = {"type": scheduler.__class__.__name__, "params": {}}
 

@@ -319,8 +319,11 @@ def feature_vector(x: np.ndarray, fs: float) -> Tuple[np.ndarray, List[str]]:
         feats.append(bandpower_welch(x, fs, band))
         names.append(f"bp_{name}")
 
-    # PSD slope
-    feats.append(psd_slope(x, fs))
+    # PSD slope (robust to short windows)
+    _slope = psd_slope(x, fs)
+    if not np.isfinite(_slope):
+        _slope = 0.0
+    feats.append(_slope)
     names.append("psd_slope")
 
     # LZC
@@ -328,7 +331,26 @@ def feature_vector(x: np.ndarray, fs: float) -> Tuple[np.ndarray, List[str]]:
     names.append("lzc")
 
     # PAC (theta-gamma)
-    mi, _ = pac_tort_mi(x, fs, phase_band=BANDS["theta"], amp_band=BANDS["gamma"])  # type: ignore
+    # Guard for very short windows where filtfilt would fail due to padlen
+    # requirement. Estimate padlen for the specified bands and skip PAC if too short.
+    try:
+        def _padlen_for_band(band: Tuple[float, float], order: int = 4) -> int:
+            nyq = 0.5 * fs
+            low_n = max(1e-6, band[0] / nyq)
+            high_n = min(0.999999, band[1] / nyq)
+            b, a = butter(order, [low_n, high_n], btype="band")
+            # SciPy filtfilt default padlen is approximately 3 * ntaps
+            return 3 * max(len(a), len(b))
+
+        min_len = max(_padlen_for_band(BANDS["theta"]), _padlen_for_band(BANDS["gamma"]))
+    except Exception:
+        # Fallback for unexpected filter-design errors
+        min_len = 27  # corresponds to order=4 (ntaps=9) under common SciPy behavior
+
+    if x.size > min_len:
+        mi, _ = pac_tort_mi(x, fs, phase_band=BANDS["theta"], amp_band=BANDS["gamma"])  # type: ignore
+    else:
+        mi = 0.0
     feats.append(mi)
     names.append("pac_tg_mi")
 

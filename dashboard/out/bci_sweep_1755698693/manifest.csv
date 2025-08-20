@@ -1,0 +1,3 @@
+run,run_dir,seed,process_noise,drift,snr_scale,noise_std,scheduler,mse,mae,ttc
+1,/Users/ali_personal/Projects/PHI/dashboard/out/bci_sweep_1755698693/run_0001,1,0.02,0.001,0.6,1.0,cosine_phi,0.003357280911866447,0.04499212006749647,0.0
+2,/Users/ali_personal/Projects/PHI/dashboard/out/bci_sweep_1755698693/run_0002,2,0.02,0.001,0.6,1.0,cosine_phi,0.00530124333168696,0.05704498438088337,0.0

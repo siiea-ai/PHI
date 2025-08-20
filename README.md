@@ -44,7 +44,7 @@ Optional (installed via requirements.txt to enable full functionality):
 - scikit-learn: optional NN backend in `phi.three` for metrics. Falls back if missing.
 - Matplotlib: previews/plots in cosmos/multiverse/omniverse and 3D plotting in three. Some helpers require it and raise clear errors if absent.
 - TensorFlow / tensorflow-macos: only for Keras export in `phi.ai.export_keras()` and `fractal ai engine --export-keras`. Not used otherwise.
-- h5py: required when exporting Keras to `.h5`. Newer TF also supports `.keras` format.
+- Keras export: prefer native `.keras` (default). Legacy `.h5` supported but requires `h5py`.
 - qiskit-terra: only to convert to a Qiskit circuit in `phi.quantum`. QASM export does not require it.
 - pydub (+ ffmpeg): for reading non‑16‑bit WAV in `phi.audio`. 16‑bit PCM WAV works without it.
 
@@ -57,6 +57,7 @@ Platform notes:
 - Quickstart: `docs/Quickstart.md`
 - Cookbook: `docs/Cookbook.md`
 - Use Cases & Workflows: `docs/Use-Cases.md`
+- LLM Training Guide (~1.3B via Transformers + PEFT): `docs/Training-1.3B-LLM.md`
 - Programmatic Neuro API example: see "Neuro API (programmatic)" in `docs/Cookbook.md`
 
 ## Documentation and Developer Environment
@@ -397,13 +398,14 @@ Compress fully-connected neural nets by decimating hidden neurons (keep every Nt
   --model ai_model.json \
   --ratio 2 --method interp \
   --analyze-output ai_metrics.csv \
-  --export-keras ai_model.h5
+  --export-keras ai_model.keras
 ```
 
 Notes:
 - Only the `ratio` strategy is implemented (educational demo).
 - Metrics CSV reports per-layer MSE and totals; depends on pandas.
 - Keras export requires TensorFlow installed (`pip install tensorflow`).
+- If no extension is provided for `--export-keras`, `.keras` is appended. Legacy `.h5` requires `h5py`.
 
 ## Neuro network compression (ratio)
 

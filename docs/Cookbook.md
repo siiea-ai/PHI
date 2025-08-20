@@ -134,8 +134,12 @@ This script uses `phi.neuro.generate_full_network()`, `compress_network()`, `exp
 .venv/bin/python -m phi.cli fractal ai engine \
   --input ai_full.json --recon-output ai_recon.json \
   --model ai_model.json --ratio 2 --method interp \
-  --analyze-output ai_metrics.csv --export-keras ai_model.h5
+  --analyze-output ai_metrics.csv --export-keras ai_model.keras
 ```
+
+Notes:
+- Prefer native `.keras` for Keras export. If no extension is provided, `.keras` is appended.
+- Legacy `.h5` is supported but requires `h5py`.
 
 ## Multiverse and Omniverse snippets
 ```bash

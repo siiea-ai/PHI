@@ -1,0 +1,8 @@
+{"instruction": "Explain the golden ratio in simple terms.", "input": "", "output": "The golden ratio, often written as phi (≈1.618), is a special number where the ratio of the whole to the larger part equals the ratio of the larger part to the smaller."}
+{"instruction": "Write a short haiku about phi.", "input": "", "output": "endless spiral sings\nphi threads form within patterns\nnature keeps her time"}
+{"instruction": "List the first eight Fibonacci numbers.", "input": "", "output": "0, 1, 1, 2, 3, 5, 8, 13"}
+{"instruction": "Provide three synonyms for harmony.", "input": "", "output": "concord, balance, accord"}
+{"instruction": "Rephrase the sentence to be more concise.", "input": "The outcome of the experiment was really very surprising to everyone involved.", "output": "The experiment’s outcome surprised everyone."}
+{"instruction": "Give a one-sentence definition of LoRA in LLM fine-tuning.", "input": "", "output": "LoRA is a parameter-efficient method that trains small adapter matrices while freezing most base model weights."}
+{"instruction": "Generate a two-line poem about learning.", "input": "", "output": "We map the unknown with borrowed light,\nTracing old stars to chart new sight."}
+{"instruction": "Summarize this text in one sentence.", "input": "Neural networks can be adapted efficiently using low-rank matrices, reducing memory and compute while retaining performance.", "output": "Low-rank adapters let neural networks adapt efficiently with lower memory and compute costs while preserving performance."}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import os
 from typing import Optional, Tuple
 import json
 
@@ -80,7 +81,7 @@ def fractal_ai() -> None:
 @click.option("--act-hidden", type=str, default="relu", show_default=True, help="Activation for hidden layers")
 @click.option("--act-output", type=str, default="sigmoid", show_default=True, help="Activation for output layer")
 @click.option("--seed", type=int, default=None, help="Random seed (optional)")
-@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.h5 or .keras)")
+@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.keras preferred; legacy .h5 supported). If no extension is provided, .keras is used.")
 def ai_generate(output_path: str, input_dim: int, output_dim: int, depth: int, base_width: int, mode: str, act_hidden: str, act_output: str, seed: Optional[int], export_keras: Optional[str]) -> None:
     """Generate a full AI model bundle (JSON)."""
     try:
@@ -130,7 +131,7 @@ def ai_compress(input_path: str, model_path: str, ratio: int, method: str) -> No
 @click.option("--hidden", type=str, default=None, help="Comma-separated target hidden widths (e.g., 64,32,16)")
 @click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default=None, help="Override expansion method recorded in model")
 @click.option("--seed", type=int, default=None, help="Random seed for stochastic expansion (optional)")
-@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.h5 or .keras)")
+@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export Keras model (.keras preferred; legacy .h5 supported). If no extension is provided, .keras is used.")
 def ai_expand(model_path: str, output_path: str, hidden: Optional[str], method: Optional[str], seed: Optional[int], export_keras: Optional[str]) -> None:
     """Expand a compressed AI model bundle back to a full model bundle."""
     try:
@@ -160,7 +161,7 @@ def ai_expand(model_path: str, output_path: str, hidden: Optional[str], method: 
 @click.option("--ratio", type=int, default=2, show_default=True, help="Keep every Nth hidden neuron")
 @click.option("--method", type=click.Choice(["interp", "nearest"], case_sensitive=False), default="interp", show_default=True, help="Expansion method")
 @click.option("--analyze", "--analyze-output", "analyze_output", type=click.Path(dir_okay=False), default=None, help="Optional metrics CSV (per-layer MSE and totals)")
-@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export reconstructed Keras model (.h5 or .keras)")
+@click.option("--export-keras", type=click.Path(dir_okay=False), default=None, help="Optional path to export reconstructed Keras model (.keras preferred; legacy .h5 supported). If no extension is provided, .keras is used.")
 def ai_engine(input_path: str, recon_output: str, model_path: Optional[str], ratio: int, method: str, analyze_output: Optional[str], export_keras: Optional[str]) -> None:
     """Compress + expand an AI model; optionally save compressed model, metrics, and Keras export."""
     try:
@@ -769,23 +770,132 @@ def neuro_expand(model_path: str, output_path: str, nodes: Optional[int], method
 
 
 @fractal_neuro.command("simulate")
-@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input full neuro JSON path")
+@click.option("--model", "model_path", type=click.Path(exists=True, dir_okay=False), required=True, help="Input neuro network path (PHI JSON, CSV edgelist, NPY/NPZ adjacency, simple JSON)")
 @click.option("--output", "output_path", type=click.Path(dir_okay=False), required=True, help="Output CSV path of state trajectories")
 @click.option("--steps", type=int, default=100, show_default=True, help="Simulation steps (outputs steps+1 rows including initial state)")
 @click.option("--dt", type=float, default=0.1, show_default=True, help="Time step size")
 @click.option("--leak", type=float, default=0.1, show_default=True, help="Leak term coefficient")
-@click.option("--input-drive", type=float, default=0.0, show_default=True, help="External input drive added to all neurons")
+@click.option("--input-drive", type=float, default=0.0, show_default=True, help="Fallback scalar external input drive added to all neurons")
+@click.option("--drive-signal", type=click.Path(exists=True, dir_okay=False), default=None, help="Optional 1D drive signal path (audio/csv/npy/npz/json/image/video)")
+@click.option("--drive-signal-normalize/--no-drive-signal-normalize", default=True, show_default=True, help="Normalize 1D drive signal before scaling")
+@click.option("--drive-signal-scale", type=float, default=1.0, show_default=True, help="Scale factor for 1D drive signal")
+@click.option("--pulse", is_flag=True, default=False, show_default=True, help="Generate a periodic pulse drive if no drive signal is provided")
+@click.option("--pulse-period", type=int, default=100, show_default=True, help="Pulse period (steps)")
+@click.option("--pulse-width", type=int, default=10, show_default=True, help="Pulse width (steps)")
+@click.option("--pulse-amplitude", type=float, default=1.0, show_default=True, help="Pulse amplitude")
+@click.option("--pulse-kind", type=click.Choice(["rect", "tri", "sine"], case_sensitive=False), default="rect", show_default=True, help="Pulse kind")
+@click.option("--drive-2d", "drive_2d_path", type=click.Path(exists=True, dir_okay=False), default=None, help="Optional 2D drive array path (time x nodes) [csv/npy/npz/json]")
+@click.option("--state-init", type=click.Choice(["random", "zeros"], case_sensitive=False), default="random", show_default=True, help="Initial neuron state if network is not a PHI JSON bundle")
+@click.option("--net-seed", type=int, default=None, help="Random seed for network state init if needed")
 @click.option("--noise-std", type=float, default=0.0, show_default=True, help="Gaussian noise std added to input drive")
-@click.option("--seed", type=int, default=None, help="Random seed for noise (optional)")
-def neuro_simulate(model_path: str, output_path: str, steps: int, dt: float, leak: float, input_drive: float, noise_std: float, seed: Optional[int]) -> None:
-    """Run simple rate-based neuron simulation on a full neuro bundle and write CSV."""
+@click.option("--seed", type=int, default=None, help="Random seed for input noise (optional)")
+def neuro_simulate(
+    model_path: str,
+    output_path: str,
+    steps: int,
+    dt: float,
+    leak: float,
+    input_drive: float,
+    drive_signal: Optional[str],
+    drive_signal_normalize: bool,
+    drive_signal_scale: float,
+    pulse: bool,
+    pulse_period: int,
+    pulse_width: int,
+    pulse_amplitude: float,
+    pulse_kind: str,
+    drive_2d_path: Optional[str],
+    state_init: str,
+    net_seed: Optional[int],
+    noise_std: float,
+    seed: Optional[int],
+) -> None:
+    """Run simple rate-based neuron simulation on a network and write CSV.
+
+    Supports multi-format network loading and time-varying input drives.
+    """
     try:
         from . import neuro as nmod  # lazy import
         import numpy as np  # lazy inside command
         import pandas as pd  # lazy inside command
 
-        bundle = nmod.load_model(model_path)
-        traj = nmod.simulate_states(bundle, steps=steps, dt=dt, leak=leak, input_drive=input_drive, noise_std=noise_std, seed=seed)
+        # Load network (PHI JSON full/ratio, CSV edgelist, NPY/NPZ adjacency, simple JSON)
+        bundle = nmod.load_network_any(model_path, state_init=state_init.lower(), seed=net_seed)
+
+        # Determine input drive
+        drive_value: float | np.ndarray
+
+        if drive_2d_path is not None:
+            # Load a 2D array (time x nodes)
+            def _load_drive_2d(path: str) -> np.ndarray:
+                ext = os.path.splitext(path)[1].lower()
+                if ext == ".npy":
+                    arr = np.load(path)
+                elif ext == ".npz":
+                    with np.load(path) as data:
+                        arr = None
+                        for k in ("arr", "drive", "x", "data"):
+                            if k in data:
+                                arr = data[k]
+                                break
+                        if arr is None:
+                            arr = list(data.values())[0]
+                elif ext == ".csv":
+                    df2 = pd.read_csv(path)
+                    num = df2.select_dtypes(include=[np.number])
+                    if num.shape[1] == 0:
+                        raise click.UsageError("2D drive CSV must contain numeric columns")
+                    arr = num.to_numpy(dtype=np.float32)
+                elif ext == ".json":
+                    with open(path, "r", encoding="utf-8") as f:
+                        obj = json.load(f)
+                    if isinstance(obj, dict):
+                        arr_like = None
+                        for k in ("drive", "array", "data", "x"):
+                            if k in obj:
+                                arr_like = obj[k]
+                                break
+                        if arr_like is None:
+                            raise click.UsageError("2D drive JSON must be a list of lists or contain 'drive'/'array'/'data'/'x'")
+                        arr = np.asarray(arr_like, dtype=np.float32)
+                    elif isinstance(obj, list):
+                        arr = np.asarray(obj, dtype=np.float32)
+                    else:
+                        raise click.UsageError("Unsupported JSON structure for 2D drive")
+                else:
+                    raise click.UsageError("Unsupported 2D drive file type: {}".format(ext))
+                arr = np.asarray(arr)
+                if arr.ndim != 2:
+                    raise click.UsageError("2D drive array must be 2D (time x nodes)")
+                return arr.astype(np.float32, copy=False)
+
+            drive_value = _load_drive_2d(drive_2d_path)
+        elif drive_signal is not None:
+            sig = nmod.load_signal_any(drive_signal, target_length=steps, normalize=drive_signal_normalize)
+            drive_value = (sig.astype(np.float32, copy=False) * float(drive_signal_scale))
+        elif pulse:
+            drive_value = nmod.make_pulse_signal(
+                steps=steps,
+                period=pulse_period,
+                width=pulse_width,
+                amplitude=pulse_amplitude,
+                kind=pulse_kind.lower(),
+            )
+        else:
+            drive_value = float(input_drive)
+
+        # Run simulation
+        traj = nmod.simulate_states(
+            bundle,
+            steps=steps,
+            dt=dt,
+            leak=leak,
+            input_drive=drive_value,
+            noise_std=noise_std,
+            seed=seed,
+        )
+
+        # Save CSV
         t = np.arange(traj.shape[0], dtype=np.int32)
         cols = ["t"] + [f"x{i}" for i in range(traj.shape[1])]
         df = pd.DataFrame(np.column_stack([t, traj]), columns=cols)
@@ -1590,6 +1700,406 @@ def fractal_engine(
         sys.exit(1)
 
 
+@main.group(name="llm")
+def llm_cmd() -> None:
+    """LLM pipeline helpers (optional deps: transformers, datasets, peft).
+
+    This group provides an interactive wizard to:
+    - pick a base model by size and repo id
+    - (optionally) download and cache tokenizer/weights locally
+    - ingest a dataset (JSONL), perform a φ (61.8/38.2) train/val split if needed
+    - tokenize to a ready-to-train format
+    - suggest golden-heuristic hyperparameters
+    - (optionally) kick off LoRA training
+    """
+
+
+@llm_cmd.command("wizard")
+@click.option("--project", type=str, default=None, help="Project name used under models/, datasets/, runs/")
+@click.option("--size", type=click.Choice(["125m", "350m", "1.3b", "1.4b", "2.7b", "6b"], case_sensitive=False), default=None, help="Model size hint")
+@click.option("--base", type=str, default=None, help="Base model repo id, e.g. EleutherAI/gpt-neo-1.3B")
+@click.option("--dataset", "datasets_in", type=str, multiple=True, help="Dataset path(s). File JSONL (golden-split) or dir with train/val.jsonl")
+@click.option("--phi-mix/--no-phi-mix", default=True, show_default=True, help="When multiple datasets are provided, interleave with φ weights")
+@click.option("--download-tokenizer/--no-download-tokenizer", default=True, show_default=True, help="Download tokenizer locally")
+@click.option("--download-weights/--no-download-weights", default=False, show_default=True, help="Download base weights locally (large)")
+@click.option("--tokenize/--no-tokenize", default=True, show_default=True, help="Tokenize dataset into ready/ directory")
+@click.option("--train/--no-train", default=False, show_default=True, help="Start LoRA training automatically")
+@click.option("--eval/--no-eval", default=False, show_default=True, help="Evaluate perplexity after training (or given adapter)")
+@click.option("--adapter", type=str, default=None, help="Optional adapter dir to evaluate (defaults to runs/<project>/lora/final)")
+@click.option("--max-length", type=int, default=1024, show_default=True, help="Tokenizer truncation length")
+@click.option("--seed", type=int, default=42, show_default=True, help="Random seed for golden split and mixing")
+@click.option("--auto/--no-auto", default=False, show_default=True, help="Non-interactive mode; do not prompt, use flags and defaults")
+# Hyperparam overrides (optional)
+@click.option("--epochs", type=int, default=None, help="Override suggested epochs")
+@click.option("--lr", type=float, default=None, help="Override suggested learning rate")
+@click.option("--warmup", type=float, default=None, help="Override warmup ratio")
+@click.option("--rank", type=int, default=None, help="Override LoRA rank")
+@click.option("--alpha", type=int, default=None, help="Override LoRA alpha")
+@click.option("--dropout", type=float, default=None, help="Override LoRA dropout")
+@click.option("--per-device-batch", type=int, default=None, help="Override per-device batch size")
+@click.option("--grad-accum", type=int, default=None, help="Override gradient accumulation")
+@click.option("--precision", type=click.Choice(["bf16", "fp16", "fp32"], case_sensitive=False), default=None, help="Precision override")
+def llm_wizard(project: Optional[str], size: Optional[str], base: Optional[str], datasets_in: Tuple[str, ...], phi_mix: bool, download_tokenizer: bool, download_weights: bool, tokenize: bool, train: bool, eval: bool, adapter: Optional[str], max_length: int, seed: int, auto: bool, epochs: Optional[int], lr: Optional[float], warmup: Optional[float], rank: Optional[int], alpha: Optional[int], dropout: Optional[float], per_device_batch: Optional[int], grad_accum: Optional[int], precision: Optional[str]) -> None:
+    """Interactive end-to-end setup for an LLM fine-tune run."""
+    try:
+        import pathlib
+        import shutil
+        import random
+
+        # 1) Choose model size and repo
+        model_candidates = {
+            "125m": ["EleutherAI/gpt-neo-125M"],
+            "350m": ["EleutherAI/gpt-neo-350M"],
+            "1.3b": ["EleutherAI/gpt-neo-1.3B", "EleutherAI/pythia-1.4b"],
+            "1.4b": ["EleutherAI/pythia-1.4b", "EleutherAI/gpt-neo-1.3B"],
+            "2.7b": ["EleutherAI/gpt-neo-2.7B"],
+            "6b": ["EleutherAI/gpt-j-6B"],
+        }
+        # Interactive selection unless base provided
+        if base is None:
+            size_lower = (size or (click.prompt(
+                "Select model size",
+                type=click.Choice(["125m", "350m", "1.3b", "1.4b", "2.7b", "6b"], case_sensitive=False),
+                default="1.3b",
+            ) if not auto else "1.3b")).lower()
+            choices = model_candidates.get(size_lower, model_candidates["1.3b"])  # default fallback
+            if auto:
+                base = choices[0]
+            else:
+                base = click.prompt("Choose a base model", type=click.Choice(choices, case_sensitive=False), default=choices[0])
+        base = str(base)
+
+        # 2) Name the project
+        if not project:
+            default_project = base.split("/")[-1].lower().replace(".", "_").replace("-", "_")
+            project = default_project if auto else click.prompt("Project name", default=default_project)
+
+        # 3) Layout
+        cwd = pathlib.Path(os.getcwd())
+        models_dir = cwd / "models"
+        proj_model_dir = models_dir / base.replace("/", "__")
+        raw_dir = cwd / "datasets" / "raw" / project
+        ready_dir = cwd / "datasets" / "ready" / project
+        runs_dir = cwd / "runs" / project
+        for d in [models_dir, proj_model_dir, raw_dir, ready_dir, runs_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+
+        # 4) Download artifacts (tokenizer + optional base weights)
+        if download_tokenizer and (auto or click.confirm("Download tokenizer now?", default=True)):
+            try:
+                from transformers import AutoTokenizer
+            except Exception:
+                click.echo("Transformers not installed. Install: pip install transformers datasets peft", err=True)
+            else:
+                tok = AutoTokenizer.from_pretrained(base, use_fast=True)
+                if tok.pad_token is None:
+                    tok.pad_token = tok.eos_token
+                tok.save_pretrained(str(proj_model_dir / "tokenizer"))
+                click.echo(f"Saved tokenizer to {proj_model_dir / 'tokenizer'}")
+
+        if download_weights and (auto or click.confirm("Download FULL base weights now? (large)", default=False)):
+            try:
+                from transformers import AutoModelForCausalLM
+            except Exception:
+                click.echo("Transformers not installed. Install: pip install transformers", err=True)
+            else:
+                model = AutoModelForCausalLM.from_pretrained(base)
+                model.save_pretrained(str(proj_model_dir / "base"))
+                click.echo(f"Saved base weights to {proj_model_dir / 'base'}")
+
+        # 5) Ingest dataset
+        # 5) Ingest dataset(s)
+        def _golden_split_lines(path: pathlib.Path, rnd: random.Random) -> Tuple[list[str], list[str]]:
+            lines: list[str] = []
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        lines.append(line.rstrip("\n"))
+            if not lines:
+                raise click.UsageError(f"Input JSONL is empty: {path}")
+            rnd.shuffle(lines)
+            split_idx = int(len(lines) * (1.0 / float(PHI)))  # ≈ 0.618
+            return lines[:split_idx], lines[split_idx:]
+
+        def _weighted_merge(list_of_lists: list[list[str]], weights: list[float], rnd: random.Random) -> list[str]:
+            # Merge items from multiple lists approximately following given weights
+            idxs = [0] * len(list_of_lists)
+            result: list[str] = []
+            active = [i for i, lst in enumerate(list_of_lists) if len(lst) > 0]
+            while active:
+                # Renormalize over remaining lists
+                rem_weights = [weights[i] for i in active]
+                s = sum(rem_weights)
+                probs = [w / s for w in rem_weights]
+                # Roulette selection
+                r = rnd.random()
+                cum = 0.0
+                chosen_idx = active[-1]
+                for j, pidx in enumerate(active):
+                    cum += probs[j]
+                    if r <= cum:
+                        chosen_idx = pidx
+                        break
+                # Take next item if available
+                ptr = idxs[chosen_idx]
+                lst = list_of_lists[chosen_idx]
+                if ptr < len(lst):
+                    result.append(lst[ptr])
+                    idxs[chosen_idx] = ptr + 1
+                # Drop exhausted lists
+                active = [i for i in active if idxs[i] < len(list_of_lists[i])]
+            return result
+
+        rnd = random.Random(int(seed))
+        train_buckets: list[list[str]] = []
+        val_buckets: list[list[str]] = []
+
+        # Interactive single-path prompt if none provided
+        ds_args = list(datasets_in)
+        if not ds_args and not auto:
+            ds_path = click.prompt(
+                "Dataset path (JSONL file or directory with train/val.jsonl)",
+                default="",
+            ).strip()
+            if ds_path:
+                ds_args = [ds_path]
+
+        for ds in ds_args:
+            p = pathlib.Path(ds)
+            if p.is_file():
+                tr, va = _golden_split_lines(p, rnd)
+                train_buckets.append(tr)
+                val_buckets.append(va)
+            elif p.is_dir():
+                train_p = p / "train.jsonl"
+                val_p = p / "val.jsonl"
+                if not train_p.exists() and (p / "valid.jsonl").exists():
+                    val_p = p / "valid.jsonl"
+                if not train_p.exists() or not val_p.exists():
+                    raise click.UsageError(f"Directory must contain train.jsonl and val.jsonl/valid.jsonl: {p}")
+                tr, va = _golden_split_lines(train_p, rnd)[0], _golden_split_lines(val_p, rnd)[0]
+                # The helper split reads and shuffles; here we only need lines without splitting again.
+                # So re-read without splitting:
+                def _read_lines(path: pathlib.Path) -> list[str]:
+                    with path.open("r", encoding="utf-8") as f:
+                        return [ln.rstrip("\n") for ln in f if ln.strip()]
+                train_buckets.append(_read_lines(train_p))
+                val_buckets.append(_read_lines(val_p))
+            else:
+                raise click.UsageError(f"Dataset path is neither file nor directory: {p}")
+
+        # Write merged train/val if any provided
+        if train_buckets or val_buckets:
+            # Compute φ weights for buckets
+            n = max(len(train_buckets), len(val_buckets))
+            if n > 0:
+                phi_weights = [ (INV_PHI ** (i+1)) for i in range(n) ]  # 0.618, 0.382, 0.236, ...
+                # Normalize to 1
+                s = sum(phi_weights)
+                phi_weights = [w / s for w in phi_weights]
+            else:
+                phi_weights = []
+
+            def _merge_or_concat(buckets: list[list[str]]) -> list[str]:
+                if not buckets:
+                    return []
+                if phi_mix and len(buckets) > 1:
+                    return _weighted_merge(buckets, phi_weights[:len(buckets)], rnd)
+                # else simple concatenation with shuffle
+                merged: list[str] = []
+                for b in buckets:
+                    merged.extend(b)
+                rnd.shuffle(merged)
+                return merged
+
+            merged_train = _merge_or_concat(train_buckets)
+            merged_val = _merge_or_concat(val_buckets)
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            with (raw_dir / "train.jsonl").open("w", encoding="utf-8") as f:
+                if merged_train:
+                    f.write("\n".join(merged_train) + "\n")
+            with (raw_dir / "val.jsonl").open("w", encoding="utf-8") as f:
+                if merged_val:
+                    f.write("\n".join(merged_val) + "\n")
+            click.echo(f"Wrote merged train/val to {raw_dir}")
+        else:
+            click.echo("No dataset provided; skipping ingestion step")
+
+        # 6) Tokenize to ready dataset
+        if tokenize and (auto or click.confirm("Tokenize dataset now?", default=True)):
+            try:
+                from datasets import load_dataset
+                from transformers import AutoTokenizer
+            except Exception:
+                click.echo("Install deps first: pip install transformers datasets", err=True)
+            else:
+                train_p = raw_dir / "train.jsonl"
+                val_p = raw_dir / "val.jsonl"
+                if not train_p.exists() or not val_p.exists():
+                    raise click.UsageError("Expected train.jsonl and val.jsonl under datasets/raw/<project>/")
+                tok = AutoTokenizer.from_pretrained(base, use_fast=True)
+                if tok.pad_token is None:
+                    tok.pad_token = tok.eos_token
+
+                raw = load_dataset("json", data_files={"train": str(train_p), "validation": str(val_p)})
+
+                def build_text(example):
+                    if "text" in example and example["text"]:
+                        return {"text": example["text"]}
+                    instruction = (example.get("instruction", "") or "").strip()
+                    inp = (example.get("input", "") or "").strip()
+                    out = (example.get("output", "") or "").strip()
+                    text = f"Instruction: {instruction}\nInput: {inp}\nOutput: {out}\n"
+                    return {"text": text}
+
+                raw = raw.map(build_text)
+
+                def tok_map(batch):
+                    return tok(batch["text"], truncation=True, max_length=int(max_length))
+
+                cols = raw["train"].column_names
+                tokd = raw.map(tok_map, batched=True, remove_columns=cols)
+                tokd.save_to_disk(str(ready_dir))
+                click.echo(f"Saved tokenized dataset to {ready_dir}")
+
+        # 7) Suggest hyperparameters (golden heuristics)
+        vram_gb = 24 if auto else click.prompt("Approx GPU VRAM (GB)", type=int, default=24)
+        # Simple heuristic knobs
+        if vram_gb < 16:
+            rank = 8
+            grad_accum = 16
+            per_dev = 1
+        elif vram_gb >= 48:
+            rank = 32
+            grad_accum = 4
+            per_dev = 1
+        else:
+            rank = 16
+            grad_accum = 8
+            per_dev = 1
+        suggestions = {
+            "base": base,
+            "dataset_ready": str(ready_dir),
+            "output_dir": str(runs_dir / "lora"),
+            "epochs": int(epochs) if epochs is not None else 3,
+            "learning_rate": float(lr) if lr is not None else 2e-4,
+            "warmup_ratio": float(warmup) if warmup is not None else 0.0618,  # φ^{-3}
+            "weight_decay": 0.1,
+            "per_device_batch": int(per_device_batch) if per_device_batch is not None else per_dev,
+            "gradient_accumulation": int(grad_accum) if grad_accum is not None else grad_accum,
+            "lora_rank": int(rank) if rank is not None else rank,
+            "lora_alpha": int(alpha) if alpha is not None else (2 * rank),
+            "lora_dropout": float(dropout) if dropout is not None else 0.05,
+            "eval_steps": 200,
+            "save_steps": 200,
+            "precision": (precision or "bf16"),
+        }
+        with (runs_dir / "suggested.json").open("w", encoding="utf-8") as f:
+            json.dump(suggestions, f, indent=2)
+        click.echo(f"Wrote suggestions to {runs_dir / 'suggested.json'}")
+
+        # 8) Optional: start training now
+        start_train = train if auto else (click.confirm("Start training now with these settings?", default=False))
+        if start_train:
+            try:
+                from datasets import load_from_disk
+                from transformers import (
+                    AutoModelForCausalLM,
+                    AutoTokenizer,
+                    Trainer,
+                    TrainingArguments,
+                    DataCollatorForLanguageModeling,
+                )
+                from peft import LoraConfig, get_peft_model, TaskType
+            except Exception:
+                click.echo("Install deps first: pip install transformers datasets peft", err=True)
+            else:
+                tok = AutoTokenizer.from_pretrained(base, use_fast=True)
+                if tok.pad_token is None:
+                    tok.pad_token = tok.eos_token
+                model = AutoModelForCausalLM.from_pretrained(base)
+                lora_cfg = LoraConfig(
+                    task_type=TaskType.CAUSAL_LM,
+                    r=int(suggestions["lora_rank"]),
+                    lora_alpha=int(suggestions["lora_alpha"]),
+                    lora_dropout=float(suggestions["lora_dropout"]),
+                    target_modules=[
+                        "q_proj", "k_proj", "v_proj", "o_proj",
+                        "fc_in", "fc_out", "dense", "proj",
+                    ],
+                )
+                model = get_peft_model(model, lora_cfg)
+
+                ds = load_from_disk(str(ready_dir))
+                collator = DataCollatorForLanguageModeling(tokenizer=tok, mlm=False)
+                targs = TrainingArguments(
+                    output_dir=str(runs_dir / "lora"),
+                    per_device_train_batch_size=int(suggestions["per_device_batch"]),
+                    per_device_eval_batch_size=1,
+                    gradient_accumulation_steps=int(suggestions["gradient_accumulation"]),
+                    num_train_epochs=int(suggestions["epochs"]),
+                    learning_rate=float(suggestions["learning_rate"]),
+                    lr_scheduler_type="cosine",
+                    warmup_ratio=float(suggestions["warmup_ratio"]),
+                    weight_decay=float(suggestions["weight_decay"]),
+                    logging_steps=25,
+                    evaluation_strategy="steps",
+                    eval_steps=int(suggestions["eval_steps"]),
+                    save_steps=int(suggestions["save_steps"]),
+                    save_total_limit=3,
+                    bf16=(suggestions["precision"].lower() == "bf16"),
+                    fp16=(suggestions["precision"].lower() == "fp16"),
+                    report_to=["none"],
+                )
+                trainer = Trainer(
+                    model=model,
+                    args=targs,
+                    train_dataset=ds["train"],
+                    eval_dataset=ds.get("validation"),
+                    data_collator=collator,
+                )
+                trainer.train()
+                out_dir = runs_dir / "lora" / "final"
+                trainer.save_model(str(out_dir))
+                click.echo(f"Saved LoRA adapter to {out_dir}")
+
+        # 9) Optional: evaluation
+        do_eval = eval if auto else (click.confirm("Run evaluation (perplexity) now?", default=False))
+        if do_eval:
+            try:
+                import math
+                from datasets import load_from_disk
+                from transformers import (
+                    AutoModelForCausalLM,
+                    AutoTokenizer,
+                    Trainer,
+                    TrainingArguments,
+                    DataCollatorForLanguageModeling,
+                )
+                from peft import PeftModel
+            except Exception:
+                click.echo("Install deps first: pip install transformers datasets peft", err=True)
+            else:
+                tok = AutoTokenizer.from_pretrained(base, use_fast=True)
+                if tok.pad_token is None:
+                    tok.pad_token = tok.eos_token
+                base_model = AutoModelForCausalLM.from_pretrained(base)
+                adapter_dir = adapter or str(runs_dir / "lora" / "final")
+                model = PeftModel.from_pretrained(base_model, adapter_dir)
+                collator = DataCollatorForLanguageModeling(tokenizer=tok, mlm=False)
+                ds = load_from_disk(str(ready_dir))
+                args = TrainingArguments(output_dir=str(runs_dir / "eval"), per_device_eval_batch_size=1)
+                trainer = Trainer(model=model, args=args, eval_dataset=ds["validation"], data_collator=collator)
+                metrics = trainer.evaluate()
+                ppl = math.exp(metrics.get("eval_loss", float("nan")))
+                click.echo(json.dumps({"perplexity": ppl, **metrics}, indent=2))
+
+        click.echo("LLM wizard completed.")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     main()
-

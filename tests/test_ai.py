@@ -79,7 +79,7 @@ def test_export_keras_if_tf_available(tmp_path: Path):
         mode="phi",
         seed=0,
     )
-    out = tmp_path / "model.h5"
+    out = tmp_path / "model.keras"
     ai_mod.export_keras(full, str(out))
     assert out.exists()
 

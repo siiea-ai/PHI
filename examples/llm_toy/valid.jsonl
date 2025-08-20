@@ -1,0 +1,4 @@
+{"instruction": "Define perplexity in language models.", "input": "", "output": "Perplexity measures how well a model predicts a sample; lower is better and e^loss for next-token models."}
+{"instruction": "Give two use cases for LoRA.", "input": "", "output": "Domain adaptation and personalization with small memory/compute overhead."}
+{"instruction": "Short analogy for gradient accumulation.", "input": "", "output": "Like saving multiple small payments before making one big purchase: you sum small gradients before a weight update."}
+{"instruction": "Rewrite to be more formal.", "input": "We kinda made it work.", "output": "We successfully achieved the intended result."}

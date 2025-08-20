@@ -172,15 +172,15 @@ def metrics_dataframe(orig: np.ndarray, recon: np.ndarray, sample_rate: int) -> 
     n = min(orig.shape[0], recon.shape[0])
     ch = orig.shape[1]
     if n == 0:
-        return pd.DataFrame([{"
-            mse": np.nan,
+        return pd.DataFrame([{
+            "mse": np.nan,
             "rmse": np.nan,
             "psnr_db": np.nan,
             "snr_db": np.nan,
             "stft_mse": np.nan,
             "frames": 0,
-            "sample_rate": sample_rate,
-            "channels": ch,
+            "sample_rate": int(sample_rate),
+            "channels": int(ch),
         }])
     a = orig[:n].astype(np.float32)
     b = recon[:n].astype(np.float32)

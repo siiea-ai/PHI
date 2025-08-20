@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
+import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -285,7 +287,7 @@ def metrics_from_paths(orig_model_path: str, recon_model_path: str) -> "pd.DataF
 def export_keras(bundle: Dict, output_path: str) -> None:
     try:
         from tensorflow.keras.models import Sequential  # type: ignore
-        from tensorflow.keras.layers import Dense  # type: ignore
+        from tensorflow.keras.layers import Dense, Input  # type: ignore
     except Exception as e:
         raise RuntimeError("TensorFlow Keras is required for export; pip install tensorflow") from e
 
@@ -296,23 +298,53 @@ def export_keras(bundle: Dict, output_path: str) -> None:
     act_hidden = str(bundle.get("act_hidden", "relu"))
     act_output = str(bundle.get("act_output", "sigmoid"))
 
-    model = Sequential()
-    prev = input_dim
-    for i, h in enumerate(hidden):
-        if i == 0:
-            model.add(Dense(h, activation=act_hidden, input_shape=(prev,)))
-        else:
+    # Build model using an explicit Input to avoid legacy input_shape warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*__array__ implementation.*copy keyword.*",
+            category=DeprecationWarning,
+        )
+        model = Sequential()
+        model.add(Input(shape=(input_dim,)))
+        for h in hidden:
             model.add(Dense(h, activation=act_hidden))
-        prev = h
-    model.add(Dense(output_dim, activation=act_output))
+        model.add(Dense(output_dim, activation=act_output))
 
-    # Assign weights
-    for i, L in enumerate(layers):
-        W = L["W"]
-        b = L["b"]
-        model.layers[i].set_weights([W, b])
+    # Assign weights to Dense layers (skip the InputLayer)
+    dense_layers = [lyr for lyr in model.layers if isinstance(lyr, Dense)]
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*__array__ implementation.*copy keyword.*",
+            category=DeprecationWarning,
+        )
+        for i, L in enumerate(layers[:len(dense_layers)]):
+            W = np.asarray(L["W"], dtype=np.float32)
+            b = np.asarray(L["b"], dtype=np.float32)
+            dense_layers[i].set_weights([W, b])
 
-    model.save(output_path)
+    # Save in native Keras format by default; suppress internal backend warnings during save
+    ext = os.path.splitext(output_path)[1].lower()
+
+    def _save(path: str) -> None:
+        with warnings.catch_warnings():
+            # Suppress NumPy/Keras DeprecationWarning triggered inside Keras backend on NumPy 2.x
+            warnings.filterwarnings(
+                "ignore",
+                message=".*__array__ implementation.*copy keyword.*",
+                category=DeprecationWarning,
+            )
+            # If user explicitly wants legacy HDF5, also suppress that noisy UserWarning
+            if path.lower().endswith((".h5", ".hdf5")):
+                warnings.filterwarnings("ignore", message=".*HDF5.*legacy.*", category=UserWarning)
+            model.save(path)
+
+    if ext in (".keras", ""):
+        final_path = output_path if ext == ".keras" else f"{output_path}.keras"
+        _save(final_path)
+    else:
+        _save(output_path)
 
 
 # ---------- Convenience helpers for CLI ----------

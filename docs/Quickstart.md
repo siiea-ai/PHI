@@ -63,6 +63,10 @@ python3.12 -m venv .venv312
 .venv312/bin/python -m pytest -q -rA
 ```
 
+## Optional: LLM training (1.3B via LoRA)
+
+For a reproducible workflow to fine-tune a ~1.3B parameter language model using Transformers + PEFT, see `docs/Training-1.3B-LLM.md`.
+
 ## Troubleshooting
 - Headless plots: set `MPLBACKEND=Agg` (CI already does this).
 - Video writing: `imageio-ffmpeg` is installed via requirements; system ffmpeg also works.

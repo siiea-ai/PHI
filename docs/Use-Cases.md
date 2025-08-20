@@ -43,8 +43,8 @@ Practical scenarios with steps and expected outcomes. Includes ways to integrate
   1. Generate: `fractal ai generate` (architecture + random weights).
   2. Compress: `fractal ai compress` (ratio pruning across hidden layers).
   3. Expand: `fractal ai expand` to target widths; optionally use `fractal ai engine`.
-  4. Export: `fractal ai engine --export-keras model.h5` for TensorFlow.
-- Outcome: JSON bundles (full/compressed/recon) and `.h5`/`.keras` for training elsewhere.
+  4. Export: `fractal ai engine --export-keras model.keras` (native Keras format; if no extension is provided, `.keras` is appended).
+- Outcome: JSON bundles (full/compressed/recon) and `.keras` for training elsewhere (legacy `.h5` supported; requires `h5py`).
 - Notes:
   - Importing trained Keras models back into PHI JSON is not implemented (export is one-way).
   - Use metrics CSV to quantify pruning impact layer-by-layer.
@@ -62,6 +62,35 @@ Practical scenarios with steps and expected outcomes. Includes ways to integrate
   - Multi-resolution curriculum: Train at multiple ratios and `--length`s to stabilize learning and reduce compute.
   - Augmentation by reconstruction: Expand with different methods (`interp` vs `hold`) and smoothing to create variants of signals/images.
 - Outcome: Faster iterations, reproducible artifacts, and measurable trade-offs between compression and performance.
+
+## 11) Emergent neuro dynamics sweep (complexity metrics)
+- Steps:
+  - Run the example script to explore regimes across leak and noise while computing synchrony, metastability, PCA dominance, participation ratio, and spectral entropy.
+  - Quick smoke test (small grid):
+    ```bash
+    .venv/bin/python examples/neuro_metrics_sweep.py \
+      --nodes 256 --model ws --ws-k 12 --ws-p 0.1 \
+      --steps 600 --burn-in 200 \
+      --leak-grid 0.08 0.20 3 --noise-grid 0.00 0.10 3 \
+      --out-prefix out/neuro_sweep_quick --plots
+    ```
+  - Full sweep (denser grid):
+    ```bash
+    .venv/bin/python examples/neuro_metrics_sweep.py \
+      --nodes 256 --model ws --ws-k 12 --ws-p 0.1 \
+      --steps 2000 --burn-in 500 \
+      --leak-grid 0.05 0.25 9 --noise-grid 0.00 0.15 9 \
+      --out-prefix out/neuro_sweep --plots
+    ```
+- Outcome:
+  - CSV at `out/neuro_sweep*.csv` containing one row per (leak, noise) with metrics.
+  - Heatmaps at `out/neuro_sweep*_<metric>.png` if `--plots` is used.
+- Notes:
+  - WS vs BA topologies: switch `--model ba --ba-m 4` to compare; small-world WS with moderate `ws_p` often shows higher metastability/participation.
+  - Interpretation (guidelines):
+    - High synchrony + low PR → overly ordered, low diversity.
+    - High spectral entropy + high PR + moderate PCA1 → richer distributed dynamics.
+    - Very high PCA1 or saturation → collapse into low-dimensional or unstable regimes.
 
 ## Operational guidance
 - Always invoke via the project venv (`.venv/bin/python -m phi.cli ...`), or activate once.

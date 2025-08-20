@@ -3,12 +3,14 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, List
 
 import numpy as np
 import pandas as pd
 import networkx as nx
+import imageio
 
 
 # -----------------------------------------------------------------------------
@@ -326,11 +328,256 @@ def expand_network(bundle: Dict, target_nodes: Optional[int] = None, method: Opt
 
 
 # -----------------------------------------------------------------------------
+# Robust input loaders (networks and signals)
+# -----------------------------------------------------------------------------
+
+
+def load_network_any(path: str, state_init: str = "random", seed: Optional[int] = None) -> Dict:
+    """Load a neuro network bundle from various file types.
+
+    Supported formats:
+    - PHI JSON bundles: full or ratio (auto-expand to full)
+    - CSV edgelist: two numeric columns (u,v) or columns named 'u','v'
+    - NPY/NPZ adjacency matrix: 2D square array; non-zero entries become edges
+    - JSON simple: dict with keys {'nodes', 'edges': [[u,v], ...]} or {'edges': ...} (nodes inferred)
+
+    Returns a full neuro bundle with an initial state (random or zeros).
+    """
+    ext = os.path.splitext(path)[1].lower()
+    rng = np.random.default_rng(seed)
+
+    def _bundle_from_edges(edges: np.ndarray, nodes: int) -> Dict:
+        edges = edges.astype(np.int32, copy=False)
+        n = int(nodes)
+        state = (rng.random(n, dtype=np.float32) if state_init.lower() == "random" else np.zeros(n, dtype=np.float32))
+        return {
+            "version": 1,
+            "type": "neuro_network_full",
+            "nodes": n,
+            "edges": int(edges.shape[1]),
+            "graph_model": "custom",
+            "params": {},
+            "seed": (int(seed) if seed is not None else None),
+            "state_dtype": "float32",
+            "state_npz_b64": _arr_to_b64_npz(state.astype(np.float32)),
+            "edges_npz_b64": _arr_to_b64_npz(edges.astype(np.int32)),
+        }
+
+    if ext == ".json":
+        obj = load_model(path)
+        btype = obj.get("type")
+        if btype == "neuro_network_full":
+            return obj
+        if btype == "neuro_network_ratio":
+            # expand to original size by default
+            return expand_network(obj, target_nodes=int(obj.get("orig_nodes", 0)))
+        # simple JSON structure
+        if "edges" in obj:
+            edges_list = obj["edges"]
+            e = np.asarray(edges_list, dtype=np.int64)
+            if e.ndim != 2 or e.shape[1] != 2:
+                raise ValueError("JSON 'edges' must be a list of [u,v]")
+            n = int(obj.get("nodes", int(np.max(e) + 1 if e.size > 0 else 0)))
+            return _bundle_from_edges(e.T, n)
+        raise ValueError("Unknown JSON structure for neuro network")
+
+    if ext == ".csv":
+        df = pd.read_csv(path)
+        cols = list(df.columns)
+        if {"u", "v"}.issubset(set(cols)):
+            u = df["u"].to_numpy()
+            v = df["v"].to_numpy()
+        elif len(cols) >= 2:
+            u = df[cols[0]].to_numpy()
+            v = df[cols[1]].to_numpy()
+        else:
+            raise ValueError("CSV must have at least two columns for edgelist (u,v)")
+        e = np.vstack([u, v]).astype(np.int64, copy=False)
+        n = int(np.max(e) + 1) if e.size > 0 else 0
+        return _bundle_from_edges(e, n)
+
+    if ext in (".npy", ".npz"):
+        arr = None
+        if ext == ".npy":
+            arr = np.load(path)
+        else:
+            with np.load(path) as data:
+                # try common keys first
+                for k in ("arr", "adj", "A", "matrix"):
+                    if k in data:
+                        arr = data[k]
+                        break
+                if arr is None:
+                    # take the first array
+                    arr = list(data.values())[0]
+        A = np.asarray(arr)
+        if A.ndim != 2 or A.shape[0] != A.shape[1]:
+            raise ValueError("Adjacency array must be 2D square")
+        n = int(A.shape[0])
+        iu, iv = np.where(np.triu(A, k=1) != 0)
+        e = np.stack([iu, iv], axis=0).astype(np.int64, copy=False)
+        return _bundle_from_edges(e, n)
+
+    raise ValueError(f"Unsupported network file type: {ext}")
+
+
+def load_signal_any(path: str, target_length: Optional[int] = None, normalize: bool = True) -> np.ndarray:
+    """Load a 1D signal from many file types and optionally resample to target_length.
+
+    Supported formats:
+    - Audio: .wav (native via imageio), or any audio via pydub if installed (delegated to phi.audio)
+    - CSV: first numeric column (or mean across columns) -> 1D
+    - NPY/NPZ: 1D array or flatten 2D/3D
+    - JSON: list of numbers under root or under key 'signal'
+    - Image: read and grayscale-mean per row flattened to 1D
+    - Video: per-frame grayscale mean -> 1D
+    """
+    ext = os.path.splitext(path)[1].lower()
+
+    def _resample_1d(x: np.ndarray, L: int) -> np.ndarray:
+        if x.size == 0:
+            return np.zeros((L,), dtype=np.float32)
+        if L <= 0 or x.size == L:
+            return x.astype(np.float32, copy=False)
+        src = np.linspace(0.0, 1.0, num=x.size)
+        tgt = np.linspace(0.0, 1.0, num=L)
+        y = np.interp(tgt, src, x.astype(np.float64))
+        return y.astype(np.float32)
+
+    sig: Optional[np.ndarray] = None
+
+    if ext in (".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac"):
+        try:
+            # Prefer phi.audio for broader codec support
+            from . import audio as am  # type: ignore
+
+            arr, sr = am.load_audio(path)
+            # Collapse to mono
+            if arr.ndim > 1:
+                sig = np.mean(arr, axis=1)
+            else:
+                sig = arr
+        except Exception:
+            # Fallback: try imageio for WAV only
+            if ext == ".wav":
+                try:
+                    arr = imageio.v3.imread(path)
+                    sig = np.asarray(arr, dtype=np.float32).squeeze()
+                except Exception as _:
+                    pass
+            if sig is None:
+                raise
+
+    elif ext == ".csv":
+        df = pd.read_csv(path)
+        num_df = df.select_dtypes(include=[np.number])
+        if num_df.shape[1] == 0:
+            raise ValueError("CSV has no numeric columns to load as signal")
+        if num_df.shape[1] == 1:
+            sig = num_df.iloc[:, 0].to_numpy(dtype=np.float32, copy=False)
+        else:
+            sig = num_df.mean(axis=1).to_numpy(dtype=np.float32, copy=False)
+
+    elif ext in (".npy", ".npz"):
+        arr = None
+        if ext == ".npy":
+            arr = np.load(path)
+        else:
+            with np.load(path) as data:
+                for k in ("arr", "signal", "x"):
+                    if k in data:
+                        arr = data[k]
+                        break
+                if arr is None:
+                    arr = list(data.values())[0]
+        arr = np.asarray(arr)
+        sig = arr.reshape(-1).astype(np.float32, copy=False)
+
+    elif ext == ".json":
+        with open(path, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+        if isinstance(obj, dict) and "signal" in obj:
+            sig = np.asarray(obj["signal"], dtype=np.float32)
+        elif isinstance(obj, list):
+            sig = np.asarray(obj, dtype=np.float32)
+        else:
+            raise ValueError("JSON must be a list of numbers or have key 'signal'")
+
+    elif ext in (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"):
+        img = imageio.v3.imread(path)
+        arr = np.asarray(img, dtype=np.float32)
+        if arr.ndim == 3:  # HxWxC
+            arr = np.mean(arr, axis=2)
+        # reduce to 1D by averaging rows
+        sig = arr.mean(axis=1)
+
+    elif ext in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
+        means: List[float] = []
+        try:
+            reader = imageio.get_reader(path)
+            for frame in reader:
+                frame_arr = np.asarray(frame, dtype=np.float32)
+                if frame_arr.ndim == 3:
+                    frame_arr = np.mean(frame_arr, axis=2)
+                means.append(float(frame_arr.mean()))
+            reader.close()
+        except Exception:
+            # best-effort; if fails, leave sig None
+            pass
+        if means:
+            sig = np.asarray(means, dtype=np.float32)
+
+    if sig is None:
+        raise ValueError(f"Unsupported signal file type or failed to load: {ext}")
+
+    sig = np.asarray(sig, dtype=np.float32)
+    if normalize and sig.size > 0:
+        sig = sig - float(sig.mean())
+        mx = float(np.max(np.abs(sig)))
+        if mx > 0:
+            sig = sig / mx
+
+    if target_length is not None:
+        sig = _resample_1d(sig, int(target_length))
+    return sig.astype(np.float32, copy=False)
+
+
+def make_pulse_signal(steps: int, period: int = 100, width: int = 10, amplitude: float = 1.0, kind: str = "rect") -> np.ndarray:
+    """Create a simple periodic pulse signal of length `steps`.
+
+    kind: 'rect' (rectangular), 'tri' (triangular), 'sine' (sinusoidal windows)
+    """
+    steps = max(0, int(steps))
+    period = max(1, int(period))
+    width = max(1, int(width))
+    t = np.arange(steps, dtype=np.float32)
+    phase = (t % period) / float(period)
+    if kind == "tri":
+        # triangle window centered on start of each period
+        win = 1.0 - np.abs((phase * 2.0) - 1.0)
+        sig = (win > (1.0 - (width / float(period)))) * win
+    elif kind == "sine":
+        sig = 0.5 * (1.0 + np.sin(2.0 * np.pi * phase))
+        sig = (phase < (width / float(period))) * sig
+    else:  # rect
+        sig = (phase < (width / float(period))).astype(np.float32)
+    return amplitude * sig.astype(np.float32, copy=False)
+
+
+# -----------------------------------------------------------------------------
 # Simulation (simple rate model)
 # -----------------------------------------------------------------------------
 
 
-def simulate_states(bundle: Dict, steps: int = 100, dt: float = 0.1, leak: float = 0.1, input_drive: float = 0.0, noise_std: float = 0.0, seed: Optional[int] = None) -> np.ndarray:
+def simulate_states(
+    bundle: Dict,
+    steps: int = 100,
+    dt: float = 0.1,
+    leak: float = 0.1,
+    input_drive: float | np.ndarray = 0.0,
+    noise_std: float = 0.0,
+    seed: Optional[int] = None,
+) -> np.ndarray:
     if bundle.get("type") != "neuro_network_full":
         raise ValueError("simulate_states expects a full neuro bundle")
     n = int(bundle.get("nodes", 0))
@@ -343,17 +590,65 @@ def simulate_states(bundle: Dict, steps: int = 100, dt: float = 0.1, leak: float
     deg = A.sum(axis=1, keepdims=True, dtype=np.float64)
     deg[deg < 1.0] = 1.0  # avoid division by zero for isolated nodes
     W = A / deg  # normalized weights in float64
+    # Replace any NaN/Inf just in case of unexpected values
+    W = np.nan_to_num(W, nan=0.0, posinf=0.0, neginf=0.0)
 
     rng = np.random.default_rng(seed)
     out = np.zeros((steps + 1, n), dtype=np.float32)
     out[0] = x.astype(np.float32)
+    # Preprocess input drive (supports scalar, 1D over time, or 2D [time, nodes])
+    drive_scalar: Optional[float] = None
+    drive_1d: Optional[np.ndarray] = None
+    drive_2d: Optional[np.ndarray] = None
+    if isinstance(input_drive, (int, float)):
+        drive_scalar = float(input_drive)
+    else:
+        arr = np.asarray(input_drive)
+        if arr.ndim == 1:
+            # length should be >= steps; if not, resample via interp
+            if arr.size != steps:
+                src = np.linspace(0.0, 1.0, num=max(1, arr.size))
+                tgt = np.linspace(0.0, 1.0, num=steps)
+                arr = np.interp(tgt, src, arr.astype(np.float64)).astype(np.float32)
+            drive_1d = arr.astype(np.float64, copy=False)
+        elif arr.ndim == 2:
+            T, N = arr.shape
+            if N != n:
+                # resample across node dimension to n (nearest)
+                idx = np.linspace(0, N - 1, num=n)
+                j = np.clip(np.round(idx).astype(int), 0, N - 1)
+                arr = arr[:, j]
+            if T != steps:
+                # resample time axis to steps via linear interp per node
+                src = np.linspace(0.0, 1.0, num=max(1, T))
+                tgt = np.linspace(0.0, 1.0, num=steps)
+                out = np.zeros((steps, n), dtype=np.float64)
+                for k in range(n):
+                    out[:, k] = np.interp(tgt, src, arr[:, k].astype(np.float64))
+                arr = out
+            drive_2d = arr.astype(np.float64, copy=False)
+        else:
+            raise ValueError("input_drive must be a scalar, 1D array, or 2D [time, nodes]")
+
     for t in range(1, steps + 1):
-        y = np.tanh(x)  # activation in float64
-        drive: np.ndarray | float = float(input_drive)
-        if noise_std > 0.0:
-            drive = drive + rng.normal(0.0, float(noise_std), size=n).astype(np.float64)
-        dx = -float(leak) * x + (W @ y) + drive
-        x = x + float(dt) * dx
+        # Guard against numerical warnings during matmul and activation
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):  # suppress benign runtime warnings
+            y = np.tanh(np.clip(x, -50.0, 50.0))  # clip input to tanh for stability
+            if drive_scalar is not None:
+                drive: np.ndarray | float = float(drive_scalar)
+            elif drive_1d is not None:
+                drive = float(drive_1d[t - 1])
+            elif drive_2d is not None:
+                drive = drive_2d[t - 1]
+            else:
+                drive = 0.0
+            if noise_std > 0.0:
+                drive = drive + rng.normal(0.0, float(noise_std), size=n).astype(np.float64)
+            dx = -float(leak) * x + (W @ y) + drive
+            x = x + float(dt) * dx
+        # Ensure state stays finite
+        x = np.nan_to_num(x, copy=False, nan=0.0, posinf=1e6, neginf=-1e6)
+        np.clip(x, -1e6, 1e6, out=x)
         out[t] = x.astype(np.float32)
     return out
 

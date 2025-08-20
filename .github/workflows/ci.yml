@@ -28,6 +28,11 @@ jobs:
           python -m pip install -U pip setuptools wheel
           python -m pip install -r requirements.txt
 
+      - name: CLI smoke test (wizard help)
+        run: |
+          python -m phi.cli llm --help
+          python -m phi.cli llm wizard --help
+
       - name: Run tests
         env:
           MPLBACKEND: Agg

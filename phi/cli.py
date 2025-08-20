@@ -1730,16 +1730,16 @@ def llm_cmd() -> None:
 @click.option("--seed", type=int, default=42, show_default=True, help="Random seed for golden split and mixing")
 @click.option("--auto/--no-auto", default=False, show_default=True, help="Non-interactive mode; do not prompt, use flags and defaults")
 # Hyperparam overrides (optional)
-@click.option("--epochs", type=int, default=None, help="Override suggested epochs")
-@click.option("--lr", type=float, default=None, help="Override suggested learning rate")
-@click.option("--warmup", type=float, default=None, help="Override warmup ratio")
-@click.option("--rank", type=int, default=None, help="Override LoRA rank")
-@click.option("--alpha", type=int, default=None, help="Override LoRA alpha")
-@click.option("--dropout", type=float, default=None, help="Override LoRA dropout")
-@click.option("--per-device-batch", type=int, default=None, help="Override per-device batch size")
-@click.option("--grad-accum", type=int, default=None, help="Override gradient accumulation")
-@click.option("--precision", type=click.Choice(["bf16", "fp16", "fp32"], case_sensitive=False), default=None, help="Precision override")
-def llm_wizard(project: Optional[str], size: Optional[str], base: Optional[str], datasets_in: Tuple[str, ...], phi_mix: bool, download_tokenizer: bool, download_weights: bool, tokenize: bool, train: bool, eval: bool, adapter: Optional[str], max_length: int, seed: int, auto: bool, epochs: Optional[int], lr: Optional[float], warmup: Optional[float], rank: Optional[int], alpha: Optional[int], dropout: Optional[float], per_device_batch: Optional[int], grad_accum: Optional[int], precision: Optional[str]) -> None:
+@click.option("--epochs", "epochs_override", type=int, default=None, help="Override suggested epochs")
+@click.option("--lr", "lr_override", type=float, default=None, help="Override suggested learning rate")
+@click.option("--warmup", "warmup_override", type=float, default=None, help="Override warmup ratio")
+@click.option("--rank", "rank_override", type=int, default=None, help="Override LoRA rank")
+@click.option("--alpha", "alpha_override", type=int, default=None, help="Override LoRA alpha")
+@click.option("--dropout", "dropout_override", type=float, default=None, help="Override LoRA dropout")
+@click.option("--per-device-batch", "per_device_batch_override", type=int, default=None, help="Override per-device batch size")
+@click.option("--grad-accum", "grad_accum_override", type=int, default=None, help="Override gradient accumulation")
+@click.option("--precision", "precision_override", type=click.Choice(["bf16", "fp16", "fp32"], case_sensitive=False), default=None, help="Precision override")
+def llm_wizard(project: Optional[str], size: Optional[str], base: Optional[str], datasets_in: Tuple[str, ...], phi_mix: bool, download_tokenizer: bool, download_weights: bool, tokenize: bool, train: bool, eval: bool, adapter: Optional[str], max_length: int, seed: int, auto: bool, epochs_override: Optional[int], lr_override: Optional[float], warmup_override: Optional[float], rank_override: Optional[int], alpha_override: Optional[int], dropout_override: Optional[float], per_device_batch_override: Optional[int], grad_accum_override: Optional[int], precision_override: Optional[str]) -> None:
     """Interactive end-to-end setup for an LLM fine-tune run."""
     try:
         import pathlib
@@ -1877,9 +1877,7 @@ def llm_wizard(project: Optional[str], size: Optional[str], base: Optional[str],
                     val_p = p / "valid.jsonl"
                 if not train_p.exists() or not val_p.exists():
                     raise click.UsageError(f"Directory must contain train.jsonl and val.jsonl/valid.jsonl: {p}")
-                tr, va = _golden_split_lines(train_p, rnd)[0], _golden_split_lines(val_p, rnd)[0]
-                # The helper split reads and shuffles; here we only need lines without splitting again.
-                # So re-read without splitting:
+                # Read lines as-is
                 def _read_lines(path: pathlib.Path) -> list[str]:
                     with path.open("r", encoding="utf-8") as f:
                         return [ln.rstrip("\n") for ln in f if ln.strip()]
@@ -1966,33 +1964,33 @@ def llm_wizard(project: Optional[str], size: Optional[str], base: Optional[str],
         vram_gb = 24 if auto else click.prompt("Approx GPU VRAM (GB)", type=int, default=24)
         # Simple heuristic knobs
         if vram_gb < 16:
-            rank = 8
-            grad_accum = 16
-            per_dev = 1
+            rank_val = 8
+            ga_val = 16
+            per_dev_val = 1
         elif vram_gb >= 48:
-            rank = 32
-            grad_accum = 4
-            per_dev = 1
+            rank_val = 32
+            ga_val = 4
+            per_dev_val = 1
         else:
-            rank = 16
-            grad_accum = 8
-            per_dev = 1
+            rank_val = 16
+            ga_val = 8
+            per_dev_val = 1
         suggestions = {
             "base": base,
             "dataset_ready": str(ready_dir),
             "output_dir": str(runs_dir / "lora"),
-            "epochs": int(epochs) if epochs is not None else 3,
-            "learning_rate": float(lr) if lr is not None else 2e-4,
-            "warmup_ratio": float(warmup) if warmup is not None else 0.0618,  # φ^{-3}
+            "epochs": int(epochs_override) if epochs_override is not None else 3,
+            "learning_rate": float(lr_override) if lr_override is not None else 2e-4,
+            "warmup_ratio": float(warmup_override) if warmup_override is not None else 0.0618,  # φ^{-3}
             "weight_decay": 0.1,
-            "per_device_batch": int(per_device_batch) if per_device_batch is not None else per_dev,
-            "gradient_accumulation": int(grad_accum) if grad_accum is not None else grad_accum,
-            "lora_rank": int(rank) if rank is not None else rank,
-            "lora_alpha": int(alpha) if alpha is not None else (2 * rank),
-            "lora_dropout": float(dropout) if dropout is not None else 0.05,
+            "per_device_batch": int(per_device_batch_override) if per_device_batch_override is not None else per_dev_val,
+            "gradient_accumulation": int(grad_accum_override) if grad_accum_override is not None else ga_val,
+            "lora_rank": int(rank_override) if rank_override is not None else rank_val,
+            "lora_alpha": int(alpha_override) if alpha_override is not None else (2 * (int(rank_override) if rank_override is not None else rank_val)),
+            "lora_dropout": float(dropout_override) if dropout_override is not None else 0.05,
             "eval_steps": 200,
             "save_steps": 200,
-            "precision": (precision or "bf16"),
+            "precision": (precision_override or "bf16"),
         }
         with (runs_dir / "suggested.json").open("w", encoding="utf-8") as f:
             json.dump(suggestions, f, indent=2)
@@ -2099,6 +2097,65 @@ def llm_wizard(project: Optional[str], size: Optional[str], base: Optional[str],
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+@main.group("neuro")
+def neuro_cmd() -> None:
+    """Neural tools including BCI simulation."""
+
+
+@neuro_cmd.command("bci-sim")
+@click.option("--steps", type=int, default=500, show_default=True, help="Number of closed-loop steps")
+@click.option("--fs", type=float, default=256.0, show_default=True, help="Sampling rate (Hz)")
+@click.option("--window-sec", type=float, default=1.0, show_default=True, help="Window duration per step (sec)")
+@click.option("--seed", type=int, default=42, show_default=True, help="Random seed")
+@click.option("--process-noise", type=float, default=0.02, show_default=True, help="Latent process noise")
+@click.option("--drift", type=float, default=0.001, show_default=True, help="Latent slow drift magnitude")
+@click.option("--ctrl-effect", type=float, default=0.05, show_default=True, help="Control influence on latent")
+@click.option("--base-lr", type=float, default=0.05, show_default=True, help="Decoder base learning rate")
+@click.option("--base-gain", type=float, default=0.5, show_default=True, help="Controller base gain")
+@click.option("--scheduler", type=click.Choice(["constant", "cosine", "cosine_phi"], case_sensitive=False), default="cosine_phi", show_default=True, help="Scheduler type")
+@click.option("--const-v", type=float, default=1.0, show_default=True, help="Constant scheduler value (if scheduler=constant)")
+@click.option("--cos-period", type=int, default=200, show_default=True, help="Cosine period (steps)")
+@click.option("--cos-min", type=float, default=0.2, show_default=True, help="Cosine min value")
+@click.option("--cos-max", type=float, default=1.0, show_default=True, help="Cosine max value")
+@click.option("--phi-T0", "phi_T0", type=int, default=200, show_default=True, help="Initial period for φ-restarts")
+@click.option("--phi", "phi_val", type=float, default=1.618, show_default=True, help="Golden ratio factor for period growth")
+@click.option("--phi-min", type=float, default=0.2, show_default=True, help="Min value for φ-restarts scheduler")
+@click.option("--phi-max", type=float, default=1.0, show_default=True, help="Max value for φ-restarts scheduler")
+@click.option("--out-dir", type=click.Path(dir_okay=True, file_okay=False), default=None, help="Optional output directory to save logs")
+def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_noise: float, drift: float, ctrl_effect: float, base_lr: float, base_gain: float, scheduler: str, const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, out_dir: Optional[str]) -> None:
+    """Run a closed-loop BCI simulation and print summary metrics."""
+    try:
+        from .neuro import bci as bci_mod
+    except Exception as e:
+        click.echo(f"Error importing neuro.bci: {e}", err=True)
+        sys.exit(1)
+
+    # Build scheduler
+    sch_type = scheduler.lower()
+    if sch_type == "constant":
+        sch = bci_mod.ConstantScheduler(v=float(const_v))
+    elif sch_type == "cosine":
+        sch = bci_mod.CosineScheduler(period=int(cos_period), min_v=float(cos_min), max_v=float(cos_max))
+    else:
+        sch = bci_mod.CosineWithPhiRestarts(T0=int(phi_T0), phi=float(phi_val), min_v=float(phi_min), max_v=float(phi_max))
+
+    # Config
+    cfg = bci_mod.BCIConfig(
+        fs=float(fs),
+        window_sec=float(window_sec),
+        steps=int(steps),
+        seed=int(seed),
+        process_noise=float(process_noise),
+        drift=float(drift),
+        ctrl_effect=float(ctrl_effect),
+        base_lr=float(base_lr),
+        base_gain=float(base_gain),
+    )
+
+    logs = bci_mod.simulate(cfg, scheduler=sch, out_dir=out_dir)
+    summary = {k: float(v[0]) for k, v in logs.items() if k in ("mse", "mae", "ttc")}
+    click.echo(json.dumps({"summary": summary, "out_dir": out_dir}, indent=2))
 
 
 if __name__ == "__main__":

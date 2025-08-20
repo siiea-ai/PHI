@@ -50,6 +50,35 @@ It will:
 - Tokenize into a ready dataset at `datasets/ready/<project>/`.
 - Suggest golden-heuristic hyperparameters and optionally start a LoRA run under `runs/<project>/`.
 
+Non-interactive mode (no prompts):
+
+```bash
+python -m phi.cli llm wizard \
+  --auto \
+  --size 125m \
+  --base EleutherAI/gpt-neo-125M \
+  --project toy_phi \
+  --dataset examples/llm_toy/train.jsonl \
+  --tokenize --train --eval \
+  --epochs 1 --rank 8 --warmup 0.0618
+```
+
+Multi-dataset φ-mix (interleave sources by φ weights 0.618, 0.382, 0.236, …):
+
+```bash
+python -m phi.cli llm wizard \
+  --auto --base EleutherAI/gpt-neo-125M --project mix_phi \
+  --dataset data/domain_a.jsonl \
+  --dataset data/domain_b.jsonl \
+  --phi-mix --tokenize --train
+```
+
+Common flags:
+- `--download-tokenizer/--no-download-tokenizer` (default: on)
+- `--download-weights/--no-download-weights` (default: off)
+- `--tokenize/--no-tokenize`, `--train/--no-train`, `--eval/--no-eval`
+- Hyperparams: `--epochs`, `--lr`, `--warmup`, `--rank`, `--alpha`, `--dropout`, `--per-device-batch`, `--grad-accum`, `--precision`
+
 ## 2) Prepare your dataset
 
 Two common formats:
@@ -109,6 +138,23 @@ Recommended 1.3–1.4B bases on Hugging Face Hub:
 - `EleutherAI/pythia-1.4b`
 
 Using pretrained models dramatically reduces compute vs training from scratch.
+
+### How to choose
+
+- Compatibility: tokenizer/vocab that matches your language/domain, and context length sufficient for your prompts.
+- Licensing & usage: verify model license fits your project.
+- Training data & capabilities: prefer bases closer to your domain; broader pretraining is safer if unsure.
+- Hardware fit: 1.3–1.4B is feasible on a single 24–48 GB GPU; QLoRA helps further.
+- Ecosystem maturity: look for community reports, evals, and good tokenizer behavior.
+
+If you’re targeting instruction-like tasks, it’s fine to start from a base LM and instruction-tune on your data. If a well-maintained instruction‑tuned 1.3–1.4B exists for your needs, you can start there and still add LoRA adapters.
+
+### Task specialization tips
+
+- Instruction/chat style: format examples consistently (e.g., fields `instruction`, `input`, `output`). See the example formatter in §2.
+- Domain adaptation: keep your output style stable; mix multiple sources with `--phi-mix` to interleave domains proportionally.
+- Classification/regression: consider sequence‑classification heads instead of causal LM fine‑tuning, or use prompting with a generative LM; choose based on deployment needs.
+- Summarization/QA: ensure prompts include clear task delimiters; monitor length truncation at tokenization.
 
 ## 4) Parameter‑efficient fine‑tuning (LoRA/QLoRA)
 
@@ -227,6 +273,16 @@ Run:
   --data out/llm_dataset
 ```
 
+## 5.1) Monitoring and hyperparameter tuning
+
+- Enable experiment tracking (e.g., Weights & Biases): set `report_to=["wandb"]` in `TrainingArguments`, `pip install wandb`, and `wandb login`. Track loss, eval loss, learning rate, and gradients.
+- Adjust over time:
+  - Learning rate: start at 2e-4; scan down if unstable, up if underfitting.
+  - Warmup: `warmup_ratio=0.0618` (φ^{-3}) is a solid default; try 0.0382–0.1 ranges.
+  - LoRA: scan rank in {8, 16, 32}; keep dropout near 0.05 unless overfitting.
+  - Effective batch: increase via gradient accumulation; keep GPU mem in check.
+  - Early stopping: stop when eval loss plateaus; save best checkpoints.
+
 ## 6) Inference
 
 ```python
@@ -253,6 +309,18 @@ PHI explores φ‑inspired heuristics; apply carefully and validate empirically:
 - Keep head dimension near 64; for custom architectures, depth:width decisions can be scanned around φ‑proportions.
 
 These are heuristics, not guarantees—measure with validation loss and task metrics.
+
+Example (Trainer) using φ warmup and cosine with hard restarts:
+
+```python
+args = TrainingArguments(
+    ...,
+    lr_scheduler_type="cosine_with_restarts",  # script defaults to "cosine"
+    warmup_ratio=0.0618,
+)
+# Note: if you need fine‑grained control over restart periods/cycles,
+# consider a custom scheduler or phase your training into multiple runs.
+```
 
 ## 8) Reproducibility
 

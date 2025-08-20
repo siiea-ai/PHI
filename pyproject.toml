@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phi-sim"
+version = "0.1.0"
+description = "PHI: golden ratio experiments, signals, and neuro BCI simulations"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "PHI Team" }]
+dependencies = [
+  "numpy",
+  "scipy",
+  "pandas",
+  "click",
+  "Pillow",
+  "imageio",
+  "imageio-ffmpeg",
+  "scikit-learn",
+  "matplotlib",
+  "h5py",
+]
+
+[project.urls]
+Homepage = "https://example.com/phi"
+
+[tool.setuptools.packages.find]
+include = ["phi*"]

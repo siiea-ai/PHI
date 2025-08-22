@@ -155,8 +155,10 @@ class Environment:
         self.y = self.y + drift + noise + self.cfg.ctrl_effect * float(u)
 
         # generate windowed signal
-        n = int(self.cfg.fs * self.cfg.window_sec)
-        t_arr = (np.arange(n) + self.t * n) / self.cfg.fs
+        # robustly handle tiny or non-positive window sizes
+        n = max(1, int(math.ceil(float(self.cfg.fs) * float(self.cfg.window_sec))))
+        fs = float(self.cfg.fs) if float(self.cfg.fs) > 0.0 else 1.0
+        t_arr = (np.arange(n) + self.t * n) / fs
         self.t += 1
 
         # oscillations

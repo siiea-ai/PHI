@@ -1,2 +1,0 @@
-run,run_dir,seed,process_noise,drift,snr_scale,noise_std,scheduler,mse,mae,ttc,status
-1,out/bci_sweep_smoketest_ok/run_0001,1,0.02,0.001,0.6,1.0,cosine_phi,0.0016096768797740108,0.034836009301336866,0.0,ok

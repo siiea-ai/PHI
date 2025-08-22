@@ -16,9 +16,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from phi.neuro.datasets import load_bci_dataset  # noqa: E402
-from sklearn.linear_model import Ridge, Lasso, LinearRegression  # noqa: E402
-from sklearn.model_selection import train_test_split  # noqa: E402
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score  # noqa: E402
+
+# Handle sklearn import gracefully
+try:
+    from sklearn.linear_model import Ridge, Lasso, LinearRegression  # noqa: E402
+    from sklearn.model_selection import train_test_split  # noqa: E402
+    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score  # noqa: E402
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
 
 st.set_page_config(page_title="BCI Train", page_icon="🧠", layout="wide")
 st.title("Neuro BCI • Baseline Training")
@@ -221,7 +227,12 @@ with st.sidebar:
         return " ".join([p for p in parts if p])
     st.caption("Equivalent CLI command")
     st.code(_cli_preview(), language="bash")
-    start_btn = st.button("Start Training (background)", type="primary")
+    if not SKLEARN_AVAILABLE:
+        st.error("❌ **Missing Dependency**: scikit-learn is required for BCI training")
+        st.info("📦 Install with: `pip install scikit-learn`")
+        start_btn = st.button("Start Training (background)", type="primary", disabled=True)
+    else:
+        start_btn = st.button("Start Training (background)", type="primary")
 
 
 params = {

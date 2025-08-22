@@ -2105,7 +2105,7 @@ def neuro_cmd() -> None:
 
 
 @neuro_cmd.command("bci-sim")
-@click.option("--steps", type=int, default=500, show_default=True, help="Number of closed-loop steps")
+@click.option("--steps", type=int, default=10, show_default=True, help="Number of closed-loop steps")
 @click.option("--fs", type=float, default=256.0, show_default=True, help="Sampling rate (Hz)")
 @click.option("--window-sec", type=float, default=1.0, show_default=True, help="Window duration per step (sec)")
 @click.option("--seed", type=int, default=42, show_default=True, help="Random seed")
@@ -2198,7 +2198,7 @@ def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_n
 
 
 @neuro_cmd.command("bci-sweep")
-@click.option("--steps", type=int, default=300, show_default=True)
+@click.option("--steps", type=int, default=10, show_default=True)
 @click.option("--fs", type=float, default=256.0, show_default=True)
 @click.option("--window-sec", type=float, default=1.0, show_default=True)
 @click.option("--seeds", type=int, multiple=True, default=[1, 2], show_default=True)
@@ -2227,11 +2227,12 @@ def neuro_bci_sim(steps: int, fs: float, window_sec: float, seed: int, process_n
 @click.option("--step-gamma", type=float, default=0.5, show_default=True)
 @click.option("--step-period", type=int, default=200, show_default=True)
 @click.option("--max-run-sec", type=float, default=0.0, show_default=True, help="Max seconds per run; 0 disables timeout")
+@click.option("--verbose/--no-verbose", default=False, show_default=True, help="Print per-run progress to stderr")
 @click.option("--save-features/--no-save-features", default=True, show_default=True)
 @click.option("--save-windows/--no-save-windows", default=False, show_default=True)
 @click.option("--save-config/--no-save-config", default=True, show_default=True)
 @click.option("--out-root", type=click.Path(dir_okay=True, file_okay=False), required=True, help="Root directory to write runs and manifest.csv")
-def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, ...], process_noise: Tuple[float, ...], drift: Tuple[float, ...], snr_scale: Tuple[float, ...], noise_std: Tuple[float, ...], theta_hz: float, gamma_hz: float, base_lr: float, base_gain: float, ctrl_effect: float, schedulers: Tuple[str, ...], const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, lin_start: float, lin_end: float, lin_duration: int, step_initial: float, step_gamma: float, step_period: int, max_run_sec: float, save_features: bool, save_windows: bool, save_config: bool, out_root: str) -> None:
+def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, ...], process_noise: Tuple[float, ...], drift: Tuple[float, ...], snr_scale: Tuple[float, ...], noise_std: Tuple[float, ...], theta_hz: float, gamma_hz: float, base_lr: float, base_gain: float, ctrl_effect: float, schedulers: Tuple[str, ...], const_v: float, cos_period: int, cos_min: float, cos_max: float, phi_T0: int, phi_val: float, phi_min: float, phi_max: float, lin_start: float, lin_end: float, lin_duration: int, step_initial: float, step_gamma: float, step_period: int, max_run_sec: float, verbose: bool, save_features: bool, save_windows: bool, save_config: bool, out_root: str) -> None:
     """Run a grid of BCI simulations and write a manifest of results."""
     try:
         import pandas as pd
@@ -2273,10 +2274,11 @@ def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, 
 
         # Cooperative timeout per run via on_step
         run_start = time.time()
-        click.echo(
-            f"[bci-sweep] start run {run_idx}: seed={seed}, pn={pn}, dr={dr}, snr={snr}, ns={ns}, scheduler={sch_name}",
-            err=True,
-        )
+        if verbose:
+            click.echo(
+                f"[bci-sweep] start run {run_idx}: seed={seed}, pn={pn}, dr={dr}, snr={snr}, ns={ns}, scheduler={sch_name}",
+                err=True,
+            )
         def _on_step(t: int) -> None:
             mrs = float(max_run_sec or 0.0)
             if mrs > 0.0 and (time.time() - run_start) > mrs:
@@ -2303,10 +2305,11 @@ def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, 
             }
             rows.append(row)
             elapsed = time.time() - run_start
-            click.echo(
-                f"[bci-sweep] done run {run_idx} in {elapsed:.2f}s: {summary}",
-                err=True,
-            )
+            if verbose:
+                click.echo(
+                    f"[bci-sweep] done run {run_idx} in {elapsed:.2f}s: {summary}",
+                    err=True,
+                )
         except bci_mod.SimulationInterrupt as si:
             # Timeout: record row with NaN metrics and continue
             summary = {"mse": np.nan, "mae": np.nan, "ttc": np.nan}
@@ -2324,10 +2327,32 @@ def neuro_bci_sweep(steps: int, fs: float, window_sec: float, seeds: Tuple[int, 
             }
             rows.append(row)
             elapsed = time.time() - run_start
-            click.echo(
-                f"[bci-sweep] timeout run {run_idx} after {elapsed:.2f}s (limit={max_run_sec}s)",
-                err=True,
-            )
+            if verbose:
+                click.echo(
+                    f"[bci-sweep] timeout run {run_idx} after {elapsed:.2f}s (limit={max_run_sec}s)",
+                    err=True,
+                )
+        except Exception as e:
+            # Unexpected error: record row and continue
+            summary = {"mse": np.nan, "mae": np.nan, "ttc": np.nan}
+            row = {
+                "run": run_idx,
+                "run_dir": run_dir,
+                "seed": seed,
+                "process_noise": pn,
+                "drift": dr,
+                "snr_scale": snr,
+                "noise_std": ns,
+                "scheduler": sch_name,
+                **summary,
+                "status": "error",
+            }
+            rows.append(row)
+            if verbose:
+                click.echo(
+                    f"[bci-sweep] error run {run_idx}: {e}",
+                    err=True,
+                )
 
     manifest_path = os.path.join(out_root, "manifest.csv")
     pd.DataFrame(rows).to_csv(manifest_path, index=False)

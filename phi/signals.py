@@ -66,11 +66,17 @@ def compute_psd_welch(x: np.ndarray, fs: float, nperseg: Optional[int] = None) -
     x = np.asarray(x, dtype=float)
     if x.ndim != 1:
         raise ValueError("compute_psd_welch expects a 1D array")
+    # Guard extremely short inputs or non-positive sampling rates
+    if x.size < 2 or not np.isfinite(fs) or fs <= 0:
+        # Fallback: single-bin DC-like PSD with tiny floor to avoid log(0)
+        return np.asarray([0.0], dtype=float), np.asarray([1e-20], dtype=float)
     if nperseg is None:
         nperseg = min(1024, max(256, int(fs * 2)))
     # Ensure parameters are valid for short inputs
     effective = int(min(nperseg, x.size))
-    effective = max(2, effective)
+    if effective < 2:
+        # Not enough samples for Welch; mimic DC floor behavior
+        return np.asarray([0.0], dtype=float), np.asarray([1e-20], dtype=float)
     noverlap = min(nperseg // 2, effective - 1)
     freqs, pxx = welch(x, fs=fs, nperseg=effective, noverlap=noverlap, detrend="constant")
     return freqs, pxx + 1e-20  # avoid log(0)

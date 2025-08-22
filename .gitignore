@@ -8,16 +8,65 @@ __pycache__/
 .dist/
 .build/
 *.egg
-datasets/
-models/
 
-# Environments
+# Virtual environments
 .venv/
 venv/
 .env
+.env.local
 
-# OS
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files and outputs
+*.tmp
+*.temp
+*.log
+out/
+outputs/
+temp/
+tmp/
+
+# Model files and datasets (large files)
+*.bin
+*.safetensors
+*.h5
+*.pkl
+*.pickle
+models/
+datasets/
+checkpoints/
+
+# Training outputs
+wandb/
+tensorboard_logs/
+lightning_logs/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Personal/sensitive files
 docs/phi project.rtf
 docs/phi project2.rtf
+*.key
+*.pem
+*.p12
+config.local.*
+
+# Dashboard cache
+dashboard/out/
+.streamlit/
 

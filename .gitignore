@@ -61,6 +61,7 @@ lightning_logs/
 # Personal/sensitive files
 docs/phi project.rtf
 docs/phi project2.rtf
+docs/Cryptic-Instruction*.rtf
 *.key
 *.pem
 *.p12

@@ -798,6 +798,12 @@ If you use PHI in your research, please cite:
 - Inspired by natural optimization patterns and Fibonacci sequences
 - Community-driven research and educational project
 
+## 👨‍💻 About
+
+Created by **Imran Ali** at **Siiea AI Innovations, LLC** - advancing AI through mathematical innovation and open research.
+
+For more information, see [ABOUT.md](ABOUT.md).
+
 ## 📞 Support
 
 - 📖 **Documentation**: Check the [docs/](docs/) directory

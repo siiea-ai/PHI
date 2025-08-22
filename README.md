@@ -26,7 +26,7 @@
 
 ### 1. Installation
 ```bash
-git clone https://github.com/your-username/PHI.git
+git clone https://github.com/siiea-ai/PHI.git
 cd PHI
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
@@ -787,7 +787,7 @@ If you use PHI in your research, please cite:
   title={PHI: Golden Ratio AI Training Framework},
   author={PHI Research Team},
   year={2024},
-  url={https://github.com/your-username/PHI},
+  url={https://github.com/siiea-ai/PHI},
   note={Research framework for golden ratio-based AI training optimization}
 }
 ```
